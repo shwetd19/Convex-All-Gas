@@ -31,6 +31,10 @@ export default defineSchema({
     subject: v.optional(v.string()),
     receivedAt: v.number(),
     preferenceNote: v.optional(v.string()),
+    // True when this was a reply in a digest thread ("skip #2") rather
+    // than a forward with links — handled by convex/feedback.ts, hidden
+    // from the forwards list on the dashboard.
+    isFeedback: v.optional(v.boolean()),
   })
     .index("by_thread", ["agentmailThreadId"])
     .index("by_agentmail_message", ["agentmailMessageId"]),
@@ -74,10 +78,29 @@ export default defineSchema({
   digests: defineTable({
     agentmailThreadId: v.string(),
     listingIds: v.array(v.id("listings")),
+    // The ranked listings in the exact order they were numbered in the
+    // email body, so a reply like "skip #2" resolves to a listing.
+    // Optional only for digests sent before replies were supported.
+    rankedListingIds: v.optional(v.array(v.id("listings"))),
     body: v.string(),
     listingCount: v.number(),
     sentAt: v.number(),
-  }),
+  }).index("by_thread", ["agentmailThreadId"]),
+
+  // Steering signals a user sent by replying to a digest ("skip #2",
+  // "more like #3"). Read by convex/ai.ts's extractAndScore so future
+  // batches are scored with the user's past reactions in the prompt.
+  feedback: defineTable({
+    ownerEmail: v.string(),
+    kind: v.union(v.literal("skip"), v.literal("more"), v.literal("less")),
+    listingId: v.id("listings"),
+    url: v.string(),
+    domain: v.string(),
+    title: v.optional(v.string()),
+    summary: v.optional(v.string()),
+    digestId: v.id("digests"),
+    createdAt: v.number(),
+  }).index("by_owner", ["ownerEmail"]),
 
   // One row per forwarder (keyed by the lowercased address they forward
   // from — see convex/lib/parseFrom.ts) tracking their own debounced digest

@@ -1,6 +1,6 @@
 # Hackathon log
 
-- **Project:** Listing Digest
+- **Project:** Sift (formerly Listing Digest)
 - **Event:** Convex All Gas Hackathon
 - **What it does:** Forward listing emails (apartments, jobs, newsletters) with a preference note; it scrapes and ranks the links live, then batches everything into one categorized digest reply — immediately on request ("digest now" / "jobs now"), or after a quiet period.
 - **Live app:** https://flippant-stork-696.convex.site

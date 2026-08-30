@@ -194,8 +194,8 @@ function InboxSetup() {
         >
           {address}
         </button>
-        {copied && <span className="copied-note">copied</span>} — put your preferences
-        (budget, must-haves) as the first line of your note.
+        {copied && <span className="copied-note">copied</span>} — put what you want as the
+        first line, e.g. <em>remote, senior, $150k+</em>.
       </div>
     );
   }
@@ -360,6 +360,42 @@ function DigestHistory() {
   );
 }
 
+const FEEDBACK_LABEL: Record<string, string> = {
+  skip: "Skip",
+  more: "More like this",
+  less: "Fewer like this",
+};
+
+function Steering() {
+  const feedback = useQuery(api.feedback.listMine);
+  const remove = useMutation(api.feedback.remove);
+
+  if (!feedback || feedback.length === 0) return null;
+
+  return (
+    <section className="steering">
+      <div className="steering-header">
+        <h2>Steering</h2>
+        <span className="steering-hint">From your replies — applied to every future score.</span>
+      </div>
+      <ul className="steering-list">
+        {feedback.map((f) => (
+          <li key={f._id} className={`steering-item steering-${f.kind}`}>
+            <span className={`steering-kind steering-kind-${f.kind}`}>{FEEDBACK_LABEL[f.kind]}</span>
+            <span className="steering-title" title={f.url}>
+              {f.title ?? f.url}
+            </span>
+            <span className="steering-domain">{f.domain}</span>
+            <button className="steering-remove" title="Forget this" onClick={() => void remove({ feedbackId: f._id })}>
+              ×
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function AccountBar() {
   const me = useQuery(api.users.me);
   const { signOut } = useAuthActions();
@@ -394,7 +430,7 @@ function Dashboard() {
         <div className="app-header-top">
           <div className="brand">
             <img src="/logo.svg" alt="" className="brand-logo" width="36" height="36" />
-            <h1>Listing Digest</h1>
+            <h1>Sift</h1>
           </div>
           <div className="app-header-actions">
             <a href="/docs" className="docs-link">
@@ -404,7 +440,9 @@ function Dashboard() {
           </div>
         </div>
         <p className="app-tagline">
-          Forward listings, watch them get scraped and ranked live, get a digest back by email.
+          Forward job alerts. Every link gets scraped, scored against what you want, and batched
+          into one ranked email — watch it happen below. Also works for apartments and
+          newsletters.
         </p>
       </header>
 
@@ -416,6 +454,7 @@ function Dashboard() {
       />
       <DigestBanner pendingCount={pendingCount} />
       <BatchProgress listings={currentBatch} />
+      <Steering />
 
       <main className="app-main">
         {overview === undefined || overview === null ? (

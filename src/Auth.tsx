@@ -31,8 +31,14 @@ function SignInForm() {
     <div className="auth-screen">
       <div className="auth-card">
         <img src="/logo.svg" alt="" className="auth-logo" width="44" height="44" />
-        <h1>Listing Digest</h1>
-        <p className="app-tagline">Sign in to see the listings you've forwarded.</p>
+        <h1>Sift</h1>
+        <p className="auth-pitch">
+          You applied to 40 jobs. Every alert email is 30 links of noise.
+        </p>
+        <p className="app-tagline">
+          Forward it. Every link gets scraped, scored against what you actually want, and
+          batched into one ranked email. Reply "skip #2" to steer the next one.
+        </p>
 
         <form onSubmit={handleSubmit} className="auth-form">
           <label className="auth-label">

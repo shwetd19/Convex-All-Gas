@@ -15,6 +15,7 @@ import type * as dashboard from "../dashboard.js";
 import type * as digest from "../digest.js";
 import type * as email from "../email.js";
 import type * as emails from "../emails.js";
+import type * as feedback from "../feedback.js";
 import type * as http from "../http.js";
 import type * as inbox from "../inbox.js";
 import type * as lib_extractUrls from "../lib/extractUrls.js";
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   digest: typeof digest;
   email: typeof email;
   emails: typeof emails;
+  feedback: typeof feedback;
   http: typeof http;
   inbox: typeof inbox;
   "lib/extractUrls": typeof lib_extractUrls;

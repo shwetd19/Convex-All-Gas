@@ -17,12 +17,12 @@ function Docs() {
         ← Back to dashboard
       </a>
 
-      <h1>How to use Listing Digest</h1>
+      <h1>How to use Sift</h1>
       <p className="docs-intro">
-        Forward emails with listing links to your inbox address. Everything you send gets
-        scraped, scored against your stated preferences, and batched into a digest reply — no
-        commands required for the basic flow. The commands below give you control over{" "}
-        <em>when</em> and <em>what</em> gets sent.
+        Forward job alerts (or apartment listings, or newsletters) to your inbox address.
+        Every link gets scraped, scored against what you said you want, and batched into one
+        ranked email — no commands required for the basic flow. The commands below control{" "}
+        <em>when</em> it sends and <em>what</em> gets ranked higher next time.
       </p>
 
       <h2>The basics</h2>
@@ -32,8 +32,9 @@ function Docs() {
           at the top of the dashboard.
         </li>
         <li>
-          Put your preferences as the <strong>first line</strong> of the email — budget,
-          must-haves, whatever matters. Example: <code>under $2500, 2BR, near downtown</code>.
+          Put what you want as the <strong>first line</strong> of the email — role, level, pay,
+          location, whatever matters. Example: <code>remote, senior, $150k+</code> (or{" "}
+          <code>under $2500, 2BR, near downtown</code> for apartments).
         </li>
         <li>
           Watch the dashboard update live as each link gets scraped, scored, and tagged with a
@@ -68,6 +69,32 @@ function Docs() {
 
       <Command example='Subject: "newsletter digest"'>
         Same idea, scoped to <strong>Newsletter</strong>-classified content.
+      </Command>
+
+      <h2>Steer the next digest by replying</h2>
+      <p className="docs-intro">
+        Every digest is numbered. Reply to it in the same thread and Sift adjusts how it scores
+        your future listings — you get a one-line confirmation, and the rule shows up under{" "}
+        <strong>Steering</strong> on the dashboard, where you can remove it.
+      </p>
+
+      <Command example='Reply: "skip #2"'>
+        That listing, and ones like it (same source, same employer or property, same role or
+        area), are scored near zero from now on. Also: <code>not 2</code>, <code>drop #2</code>,{" "}
+        <code>no more like 2</code>.
+      </Command>
+
+      <Command example='Reply: "more like #3"'>
+        Listings resembling #3 get a boost in every future score.
+      </Command>
+
+      <Command example='Reply: "less like #1"'>
+        The opposite — a penalty for lookalikes, without the hard skip.
+      </Command>
+
+      <Command example='Reply: "the Bentley one is too senior"'>
+        Plain English works too. If the number patterns don't match, one small model call maps
+        your reply onto the numbered list.
       </Command>
 
       <h2>Reading the dashboard</h2>

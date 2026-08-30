@@ -17,7 +17,9 @@ export const overview = query({
     const myEmail = user.email.toLowerCase();
 
     const allEmails = await ctx.db.query("emails").order("desc").collect();
-    const mine = allEmails.filter((e) => extractEmailAddress(e.from) === myEmail).slice(0, 20);
+    const mine = allEmails
+      .filter((e) => !e.isFeedback && extractEmailAddress(e.from) === myEmail)
+      .slice(0, 20);
 
     const results = [];
     for (const email of mine) {

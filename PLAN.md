@@ -1,4 +1,4 @@
-# Listing Digest — Build Plan
+# Sift (née Listing Digest) — Build Plan
 
 Forward listings, get a ranked, live-updating digest, get an email back.
 

@@ -125,6 +125,67 @@ export function extractPreferenceNote(body: string): string | undefined {
   return note.length > 0 ? note : undefined;
 }
 
+/**
+ * The part of a reply the user actually typed: everything above the first
+ * quoted line ("> ...") or mail-client attribution ("On <date>, X wrote:").
+ * Replies to a digest quote the whole digest underneath, and that quoted
+ * text contains every listing URL and number — parsing it would re-ingest
+ * the digest's own links and mis-read "#2" from the quoted list.
+ */
+export function extractReplyText(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const kept: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith(">")) break;
+    if (/^On .+wrote:\s*$/i.test(trimmed)) break;
+    if (/^-{2,}\s*(original|forwarded) message\s*-{2,}$/i.test(trimmed)) break;
+    kept.push(line);
+  }
+  return kept.join("\n").trim();
+}
+
+export type FeedbackKind = "skip" | "more" | "less";
+export type ParsedFeedback = { kind: FeedbackKind; index: number };
+
+// "skip #2", "skip 2", "not 2", "remove #2", "no more like #2", "less like 3",
+// "more like #3", "more of 3". Numbers are 1-based as printed in the digest.
+const FEEDBACK_RES: [FeedbackKind, RegExp][] = [
+  ["more", /\b(?:more\s+(?:of|like|to)?|similar\s+to)\s*#?\s*(\d{1,2})\b/gi],
+  ["less", /\b(?:less|fewer)\s+(?:of|like)?\s*#?\s*(\d{1,2})\b/gi],
+  ["skip", /\b(?:skip|not|remove|drop|hide|ignore|no)\s+(?:interested\s+in\s+)?#?\s*(\d{1,2})\b/gi],
+];
+
+/**
+ * Cheap first-pass intent parse over the user's own reply text. Returns
+ * [] when nothing matched, in which case the caller can fall back to an
+ * LLM. "no more like #2" is negated "more" → mapped to "skip" by matching
+ * the skip pattern first on that phrase.
+ */
+export function parseFeedback(replyText: string): ParsedFeedback[] {
+  const out: ParsedFeedback[] = [];
+  const seen = new Set<string>();
+  // Negated "more": "no more like 2" / "not more of 2" → skip.
+  for (const m of replyText.matchAll(/\b(?:no|not)\s+more\s+(?:of|like)?\s*#?\s*(\d{1,2})\b/gi)) {
+    const key = `skip:${m[1]}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push({ kind: "skip", index: Number(m[1]) });
+    }
+  }
+  for (const [kind, re] of FEEDBACK_RES) {
+    for (const m of replyText.matchAll(re)) {
+      const idx = Number(m[1]);
+      if (idx < 1 || seen.has(`skip:${idx}`) && kind === "more") continue;
+      const key = `${kind}:${idx}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ kind, index: idx });
+    }
+  }
+  return out;
+}
+
 export type ListingCategory = "jobs" | "flats" | "newsletter" | "other";
 
 const IMMEDIATE_DIGEST_RE = /\b(now|digest)\b/i;

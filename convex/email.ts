@@ -44,11 +44,37 @@ export const onMessageReceived = internalMutation({
 
     const text = ((message.text ?? "") as string).toString();
     const html = ((message.html ?? "") as string).toString();
-    const urls = extractListingUrls(text, html);
-    const preferenceNote = extractPreferenceNote(text || html);
-
     const subject = message.subject as string | undefined;
     const from = (message.from as string) ?? "unknown";
+    const receivedAt = toMillis(message.timestamp ?? message.created_at);
+
+    // A reply in a thread we've already sent a digest in is steering
+    // ("skip #2", "more like #3"), not a new forward. It quotes the whole
+    // digest underneath, so we must NOT run URL extraction on it — that
+    // would re-ingest every link in the digest as a fresh listing.
+    const digest = await ctx.runQuery(internal.emails.getDigestByThread, {
+      agentmailThreadId: threadId,
+    });
+    if (digest) {
+      const emailId = await ctx.db.insert("emails", {
+        agentmailMessageId: messageId,
+        agentmailThreadId: threadId,
+        inboxId,
+        from,
+        subject,
+        receivedAt,
+        isFeedback: true,
+      });
+      await ctx.scheduler.runAfter(0, internal.ai.handleFeedbackReply, {
+        emailId,
+        digestId: digest._id,
+        text: text || html,
+      });
+      return;
+    }
+
+    const urls = extractListingUrls(text, html);
+    const preferenceNote = extractPreferenceNote(text || html);
 
     const emailId = await ctx.db.insert("emails", {
       agentmailMessageId: messageId,
@@ -56,7 +82,7 @@ export const onMessageReceived = internalMutation({
       inboxId,
       from,
       subject,
-      receivedAt: toMillis(message.timestamp ?? message.created_at),
+      receivedAt,
       preferenceNote,
     });
 
