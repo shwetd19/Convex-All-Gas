@@ -114,11 +114,60 @@ function EmailCard({ email, listings }: { email: EmailDoc; listings: ListingDoc[
       ) : (
         <ul className="listing-list">
           {listings.map((listing) => (
-            <ListingRow key={listing._id} listing={listing} />
+            // Keying on status (not just _id) forces a remount whenever a
+            // listing moves to a new stage, which replays the CSS flash
+            // animation — the visible "something just happened live" cue.
+            <ListingRow key={`${listing._id}-${listing.status}`} listing={listing} />
           ))}
         </ul>
       )}
     </section>
+  );
+}
+
+const STATUS_ORDER: ListingDoc["status"][] = ["pending", "scraping", "scraped", "ranked", "failed"];
+
+function BatchProgress({ listings }: { listings: ListingDoc[] }) {
+  if (listings.length === 0) return null;
+
+  const counts = listings.reduce(
+    (acc, l) => {
+      acc[l.status] = (acc[l.status] ?? 0) + 1;
+      return acc;
+    },
+    {} as Partial<Record<ListingDoc["status"], number>>,
+  );
+  const total = listings.length;
+
+  return (
+    <div className="batch-progress">
+      <div className="batch-progress-bar">
+        {STATUS_ORDER.map((status) => {
+          const count = counts[status];
+          if (!count) return null;
+          return (
+            <div
+              key={status}
+              className={`batch-progress-segment batch-progress-${status}`}
+              style={{ width: `${(count / total) * 100}%` }}
+              title={`${count} ${STATUS_LABEL[status]}`}
+            />
+          );
+        })}
+      </div>
+      <div className="batch-progress-legend">
+        {STATUS_ORDER.map((status) => {
+          const count = counts[status];
+          if (!count) return null;
+          return (
+            <span key={status} className="batch-progress-count">
+              <span className={`legend-dot legend-dot-${status}`} />
+              {count} {STATUS_LABEL[status]}
+            </span>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -177,12 +226,22 @@ function formatRelative(ms: number): string {
   return `${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
+function formatCountdown(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
 function DigestBanner({ pendingCount }: { pendingCount: number }) {
   const schedule = useQuery(api.digest.getSchedule);
   const [, tick] = useState(0);
 
   useEffect(() => {
-    const id = setInterval(() => tick((n) => n + 1), 30_000);
+    // Ticks every second so the countdown visibly counts down live rather
+    // than sitting on a stale "20 minutes" — the moment-to-moment motion is
+    // the point of a live-updating dashboard.
+    const id = setInterval(() => tick((n) => n + 1), 1_000);
     return () => clearInterval(id);
   }, []);
 
@@ -193,8 +252,10 @@ function DigestBanner({ pendingCount }: { pendingCount: number }) {
     return (
       <div className="digest-banner">
         Digest with {pendingCount} listing{pendingCount === 1 ? "" : "s"} sends in{" "}
-        {remaining > 0 ? formatRelative(remaining) : "a moment"} — reply with "now" to send it
-        right away.
+        <span className="digest-countdown">
+          {remaining > 0 ? formatCountdown(remaining) : "0:00"}
+        </span>{" "}
+        — reply with "now" to send it right away.
       </div>
     );
   }
@@ -230,15 +291,8 @@ function AccountBar() {
 function Dashboard() {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const overview = useQuery(api.dashboard.overview);
-  const pendingCount =
-    overview?.reduce(
-      (count, { listings }) =>
-        count +
-        listings.filter(
-          (l) => l.digestedAt === undefined && (l.status === "ranked" || l.status === "failed"),
-        ).length,
-      0,
-    ) ?? 0;
+  const currentBatch = overview?.flatMap(({ listings }) => listings).filter((l) => l.digestedAt === undefined) ?? [];
+  const pendingCount = currentBatch.filter((l) => l.status === "ranked" || l.status === "failed").length;
 
   if (isLoading) return null;
   if (!isAuthenticated) return <SignInForm />;
@@ -262,6 +316,7 @@ function Dashboard() {
 
       <InboxSetup />
       <DigestBanner pendingCount={pendingCount} />
+      <BatchProgress listings={currentBatch} />
 
       <main className="app-main">
         {overview === undefined || overview === null ? (

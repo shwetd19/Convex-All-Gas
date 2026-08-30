@@ -226,6 +226,77 @@ body {
   color: #9aa1ab;
 }
 
+.digest-countdown {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.batch-progress {
+  margin-bottom: 24px;
+}
+
+.batch-progress-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #1f232c;
+  margin-bottom: 8px;
+}
+
+.batch-progress-segment {
+  transition: width 0.4s ease;
+}
+
+.batch-progress-pending,
+.batch-progress-scraping,
+.batch-progress-scraped {
+  background: #7dd3fc;
+}
+
+.batch-progress-ranked {
+  background: #6ee7b7;
+}
+
+.batch-progress-failed {
+  background: #f87171;
+}
+
+.batch-progress-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 12px;
+  color: #9aa1ab;
+}
+
+.batch-progress-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legend-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.legend-dot-pending,
+.legend-dot-scraping,
+.legend-dot-scraped {
+  background: #7dd3fc;
+}
+
+.legend-dot-ranked {
+  background: #6ee7b7;
+}
+
+.legend-dot-failed {
+  background: #f87171;
+}
+
 .digested-tag {
   font-size: 11px;
   color: #6ee7b7;
@@ -306,6 +377,17 @@ body {
   gap: 10px;
 }
 
+@keyframes flash-update {
+  0% {
+    background: rgba(59, 130, 246, 0.22);
+    border-color: #3b82f6;
+  }
+  100% {
+    background: #0f1115;
+    border-color: #1f232c;
+  }
+}
+
 .listing-row {
   display: flex;
   justify-content: space-between;
@@ -316,6 +398,10 @@ body {
   border: 1px solid #1f232c;
   border-radius: 8px;
   flex-wrap: wrap;
+  /* Row is remounted (see the key in EmailCard) whenever its status
+     changes, which restarts this animation — the visible "just updated"
+     cue for a dashboard whose whole point is live movement. */
+  animation: flash-update 1.2s ease-out;
 }
 
 .listing-main {
