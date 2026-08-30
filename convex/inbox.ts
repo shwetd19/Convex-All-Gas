@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { action, internalMutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { agentmailApiFetch } from "./lib/agentmailRest";
 
 // Convex only lets a parent app call a mounted component's *public*
 // functions via ctx.runAction/ctx.runQuery — @agentmail/convex's
@@ -8,31 +9,8 @@ import { internal } from "./_generated/api";
 // way (confirmed: calling any public component fn like lib.listCachedInboxes
 // works, calling any internal one like lib.listInboxes throws "Couldn't
 // resolve"). Everything else we use (replyToMessage → the public enqueueSend
-// mutation, the webhook handler) doesn't hit this wall, so this is the one
-// place we talk to AgentMail's REST API directly instead of through the
-// component.
-const AGENTMAIL_BASE_URL = process.env.AGENTMAIL_BASE_URL ?? "https://api.agentmail.to/v0";
-
-async function agentmailApiFetch(path: string, init?: RequestInit) {
-  const apiKey = process.env.AGENTMAIL_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      "AGENTMAIL_API_KEY is not set on this Convex deployment. Run `npx convex env set AGENTMAIL_API_KEY <key>`.",
-    );
-  }
-  const res = await fetch(`${AGENTMAIL_BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      ...(init?.headers ?? {}),
-      Authorization: `Bearer ${apiKey}`,
-    },
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`AgentMail API error ${res.status}: ${text.slice(0, 500)}`);
-  }
-  return res.json();
-}
+// mutation, the webhook handler) doesn't hit this wall, so inbox
+// provisioning talks to AgentMail's REST API directly (lib/agentmailRest).
 
 export const saveInbox = internalMutation({
   args: { inboxId: v.string(), email: v.string(), displayName: v.optional(v.string()) },

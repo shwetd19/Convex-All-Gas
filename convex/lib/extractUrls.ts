@@ -19,6 +19,10 @@ const EXCLUDED_HOST_SUBSTRINGS = [
   "apps.apple.com",
   "itunes.apple.com",
   "play.google.com",
+  "apps.microsoft.com",
+  "google.com/maps",
+  "maps.google.com",
+  "maps.app.goo.gl",
   // LinkedIn navigation chrome that rides along in every job-alert email —
   // keep linkedin.com/*/jobs/view/... (the actual postings) by only
   // excluding these specific non-listing paths.

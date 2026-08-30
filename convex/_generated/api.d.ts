@@ -18,6 +18,7 @@ import type * as emails from "../emails.js";
 import type * as feedback from "../feedback.js";
 import type * as http from "../http.js";
 import type * as inbox from "../inbox.js";
+import type * as lib_agentmailRest from "../lib/agentmailRest.js";
 import type * as lib_extractUrls from "../lib/extractUrls.js";
 import type * as lib_parseFrom from "../lib/parseFrom.js";
 import type * as listings from "../listings.js";
@@ -41,6 +42,7 @@ declare const fullApi: ApiFromModules<{
   feedback: typeof feedback;
   http: typeof http;
   inbox: typeof inbox;
+  "lib/agentmailRest": typeof lib_agentmailRest;
   "lib/extractUrls": typeof lib_extractUrls;
   "lib/parseFrom": typeof lib_parseFrom;
   listings: typeof listings;
