@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { authTables } from "@convex-dev/auth/server";
 
 export const categoryValidator = v.union(
   v.literal("jobs"),
@@ -9,6 +10,8 @@ export const categoryValidator = v.union(
 );
 
 export default defineSchema({
+  ...authTables,
+
   // Single-row cache of the demo inbox, discovered/created via the AgentMail
   // component. Kept in our own table rather than the component's (its
   // inbox cache isn't part of the component's public typed API).

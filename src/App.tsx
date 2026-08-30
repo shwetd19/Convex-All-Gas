@@ -1,8 +1,10 @@
 import { useAction, useQuery } from "convex/react";
 import { useEffect, useState } from "react";
+import { useAuthActions, useConvexAuth } from "@convex-dev/auth/react";
 import { api } from "../convex/_generated/api";
 import type { Doc } from "../convex/_generated/dataModel";
 import Docs from "./Docs";
+import SignInForm from "./Auth";
 import "./App.css";
 
 type ListingDoc = Doc<"listings">;
@@ -209,7 +211,24 @@ function DigestBanner({ pendingCount }: { pendingCount: number }) {
   return null;
 }
 
+function AccountBar() {
+  const me = useQuery(api.users.me);
+  const { signOut } = useAuthActions();
+
+  if (!me) return null;
+
+  return (
+    <div className="account-bar">
+      <span>{me.email}</span>
+      <button className="sign-out-button" onClick={() => void signOut()}>
+        Sign out
+      </button>
+    </div>
+  );
+}
+
 function Dashboard() {
+  const { isLoading, isAuthenticated } = useConvexAuth();
   const overview = useQuery(api.dashboard.overview);
   const pendingCount =
     overview?.reduce(
@@ -221,14 +240,20 @@ function Dashboard() {
       0,
     ) ?? 0;
 
+  if (isLoading) return null;
+  if (!isAuthenticated) return <SignInForm />;
+
   return (
     <div className="app">
       <header className="app-header">
         <div className="app-header-top">
           <h1>Listing Digest</h1>
-          <a href="/docs" className="docs-link">
-            How to use
-          </a>
+          <div className="app-header-actions">
+            <a href="/docs" className="docs-link">
+              How to use
+            </a>
+            <AccountBar />
+          </div>
         </div>
         <p className="app-tagline">
           Forward listings, watch them get scraped and ranked live, get a digest back by email.
@@ -239,7 +264,7 @@ function Dashboard() {
       <DigestBanner pendingCount={pendingCount} />
 
       <main className="app-main">
-        {overview === undefined ? (
+        {overview === undefined || overview === null ? (
           <p className="empty-note">Loading…</p>
         ) : overview.length === 0 ? (
           <p className="empty-note">

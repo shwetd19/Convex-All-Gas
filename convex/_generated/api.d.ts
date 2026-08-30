@@ -9,6 +9,7 @@
  */
 
 import type * as ai from "../ai.js";
+import type * as auth from "../auth.js";
 import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
 import type * as digest from "../digest.js";
@@ -17,8 +18,10 @@ import type * as emails from "../emails.js";
 import type * as http from "../http.js";
 import type * as inbox from "../inbox.js";
 import type * as lib_extractUrls from "../lib/extractUrls.js";
+import type * as lib_parseFrom from "../lib/parseFrom.js";
 import type * as listings from "../listings.js";
 import type * as maintenance from "../maintenance.js";
+import type * as users from "../users.js";
 
 import type {
   ApiFromModules,
@@ -28,6 +31,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   ai: typeof ai;
+  auth: typeof auth;
   crons: typeof crons;
   dashboard: typeof dashboard;
   digest: typeof digest;
@@ -36,8 +40,10 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   inbox: typeof inbox;
   "lib/extractUrls": typeof lib_extractUrls;
+  "lib/parseFrom": typeof lib_parseFrom;
   listings: typeof listings;
   maintenance: typeof maintenance;
+  users: typeof users;
 }>;
 
 /**

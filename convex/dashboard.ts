@@ -1,14 +1,26 @@
 import { query } from "./_generated/server";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import { extractEmailAddress } from "./lib/parseFrom";
 
-// One reactive read for the whole dashboard: recent forwarded emails, each
-// with its listings sorted best-match-first. Small dataset for a hackathon
-// demo, so a per-email lookup here is simpler than denormalizing.
+// One shared AgentMail inbox serves every signed-in user (see PLAN.md — no
+// per-user inboxes). "User-specific" here means: only show the emails you
+// personally forwarded, matched by comparing the forwarded email's From:
+// address against your signed-in account email. Returns null when signed
+// out so the frontend can show a sign-in screen instead of an empty state.
 export const overview = query({
   args: {},
   handler: async (ctx) => {
-    const emails = await ctx.db.query("emails").order("desc").take(20);
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    const user = await ctx.db.get(userId);
+    if (!user?.email) return null;
+    const myEmail = user.email.toLowerCase();
+
+    const allEmails = await ctx.db.query("emails").order("desc").collect();
+    const mine = allEmails.filter((e) => extractEmailAddress(e.from) === myEmail).slice(0, 20);
+
     const results = [];
-    for (const email of emails) {
+    for (const email of mine) {
       const listings = await ctx.db
         .query("listings")
         .withIndex("by_email", (q) => q.eq("emailId", email._id))

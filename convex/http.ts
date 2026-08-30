@@ -3,8 +3,11 @@ import { httpAction } from "./_generated/server";
 import { registerStaticRoutes } from "@convex-dev/static-hosting";
 import { components } from "./_generated/api";
 import { agentmail } from "./email";
+import { auth } from "./auth";
 
 const http = httpRouter();
+
+auth.addHttpRoutes(http);
 
 http.route({
   path: "/agentmail/webhook",
