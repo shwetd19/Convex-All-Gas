@@ -40,21 +40,51 @@ function ScoreBar({ score }: { score: number }) {
   );
 }
 
+// Marketing/tracking links carry huge query strings (trk/eid/otpToken/...)
+// that are meaningless to a reader — show host + path only, full URL stays
+// in the href and the title tooltip.
+function displayUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const path = u.pathname.length > 36 ? `${u.pathname.slice(0, 36)}…` : u.pathname;
+    return `${u.hostname}${path}`;
+  } catch {
+    return url.length > 70 ? `${url.slice(0, 70)}…` : url;
+  }
+}
+
+// Listing errors are ConvexErrors whose string form includes the full call
+// stack — pull out just the human-readable message for display.
+function shortErrorMessage(error: string): string {
+  const messageMatch = error.match(/"message"\s*:\s*"([^"]+)"/);
+  const text = messageMatch ? messageMatch[1] : error.split("\n")[0];
+  return text.length > 180 ? `${text.slice(0, 180)}…` : text;
+}
+
 function ListingRow({ listing }: { listing: ListingDoc }) {
   const f = listing.fields;
   return (
     <li className="listing-row">
       <div className="listing-main">
-        <a href={listing.url} target="_blank" rel="noreferrer" className="listing-title">
-          {f?.title ?? listing.url}
+        <a
+          href={listing.url}
+          target="_blank"
+          rel="noreferrer"
+          className="listing-title"
+          title={listing.url}
+        >
+          {f?.title ?? displayUrl(listing.url)}
         </a>
         {listing.category && <CategoryTag category={listing.category} />}
         <div className="listing-meta">
-          {[f?.price, f?.bedrooms, f?.location].filter(Boolean).join(" · ") || listing.url}
+          {[f?.price, f?.bedrooms, f?.location].filter(Boolean).join(" · ") ||
+            (f?.title ? displayUrl(listing.url) : null)}
         </div>
         {f?.summary && <div className="listing-summary">{f.summary}</div>}
         {listing.status === "failed" && listing.error && (
-          <div className="listing-error">{listing.error}</div>
+          <div className="listing-error" title={listing.error}>
+            {shortErrorMessage(listing.error)}
+          </div>
         )}
       </div>
       <div className="listing-side">
