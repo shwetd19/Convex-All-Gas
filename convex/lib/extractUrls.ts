@@ -58,3 +58,32 @@ export function extractPreferenceNote(body: string): string | undefined {
   const note = noteLines.join(" ").trim();
   return note.length > 0 ? note : undefined;
 }
+
+export type ListingCategory = "jobs" | "flats" | "newsletter" | "other";
+
+const IMMEDIATE_DIGEST_RE = /\b(now|digest)\b/i;
+
+const CATEGORY_KEYWORDS: [ListingCategory, RegExp][] = [
+  ["jobs", /\bjobs?\b/i],
+  ["flats", /\bflats?\b|\bapartments?\b/i],
+  ["newsletter", /\bnewsletters?\b/i],
+];
+
+/**
+ * "Send now" override, checked against the subject and the user's own note
+ * (not the full body, which may quote forwarded ad copy containing these
+ * words incidentally). An optional category keyword ("jobs now", "flats
+ * digest") scopes the immediate send to just that category, leaving the
+ * rest pending for the normal batch.
+ */
+export function parseDigestCommand(
+  subject: string | undefined,
+  preferenceNote: string | undefined,
+): { immediate: boolean; category?: ListingCategory } {
+  const text = `${subject ?? ""} ${preferenceNote ?? ""}`;
+  if (!IMMEDIATE_DIGEST_RE.test(text)) return { immediate: false };
+  for (const [category, re] of CATEGORY_KEYWORDS) {
+    if (re.test(text)) return { immediate: true, category };
+  }
+  return { immediate: true };
+}

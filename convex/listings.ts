@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery, query } from "./_generated/server";
 import { internal, components } from "./_generated/api";
 import { FirecrawlClient } from "@firecrawl/firecrawl-convex";
+import { categoryValidator } from "./schema";
 
 const firecrawl = new FirecrawlClient(components.firecrawl);
 
@@ -64,9 +65,10 @@ export const saveExtraction = internalMutation({
     }),
     score: v.number(),
     scoreReason: v.optional(v.string()),
+    category: categoryValidator,
   },
-  handler: (ctx, { listingId, fields, score, scoreReason }) =>
-    ctx.db.patch(listingId, { fields, score, scoreReason, status: "ranked" }),
+  handler: (ctx, { listingId, fields, score, scoreReason, category }) =>
+    ctx.db.patch(listingId, { fields, score, scoreReason, category, status: "ranked" }),
 });
 
 export const scrapeListing = internalAction({
@@ -92,7 +94,6 @@ export const scrapeListing = internalAction({
         listingId,
         error: err instanceof Error ? err.message : String(err),
       });
-      await ctx.runAction(internal.ai.maybeSendDigest, { emailId: listing.emailId });
     }
   },
 });

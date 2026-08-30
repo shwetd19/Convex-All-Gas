@@ -1,5 +1,5 @@
 import { useAction, useQuery } from "convex/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../convex/_generated/api";
 import type { Doc } from "../convex/_generated/dataModel";
 import "./App.css";
@@ -19,6 +19,17 @@ function StatusBadge({ status }: { status: ListingDoc["status"] }) {
   return <span className={`badge badge-${status}`}>{STATUS_LABEL[status]}</span>;
 }
 
+const CATEGORY_LABEL: Record<string, string> = {
+  jobs: "Jobs",
+  flats: "Flats",
+  newsletter: "Newsletter",
+  other: "Other",
+};
+
+function CategoryTag({ category }: { category: string }) {
+  return <span className={`category-tag category-${category}`}>{CATEGORY_LABEL[category] ?? category}</span>;
+}
+
 function ScoreBar({ score }: { score: number }) {
   return (
     <div className="score-bar" title={`${score}/100`}>
@@ -36,6 +47,7 @@ function ListingRow({ listing }: { listing: ListingDoc }) {
         <a href={listing.url} target="_blank" rel="noreferrer" className="listing-title">
           {f?.title ?? listing.url}
         </a>
+        {listing.category && <CategoryTag category={listing.category} />}
         <div className="listing-meta">
           {[f?.price, f?.bedrooms, f?.location].filter(Boolean).join(" · ") || listing.url}
         </div>
@@ -49,26 +61,19 @@ function ListingRow({ listing }: { listing: ListingDoc }) {
         {listing.status === "ranked" && listing.score !== undefined && (
           <ScoreBar score={listing.score} />
         )}
+        {listing.digestedAt !== undefined && <span className="digested-tag">in digest ✓</span>}
       </div>
     </li>
   );
 }
 
 function EmailCard({ email, listings }: { email: EmailDoc; listings: ListingDoc[] }) {
-  const digestStatus =
-    email.digestSentAt === undefined ? "pending" : email.digestSentAt < 0 ? "sending" : "sent";
-
   return (
     <section className="email-card">
       <header className="email-card-header">
         <div>
           <div className="email-from">{email.from}</div>
           {email.preferenceNote && <div className="email-pref">"{email.preferenceNote}"</div>}
-        </div>
-        <div className={`digest-status digest-status-${digestStatus}`}>
-          {digestStatus === "pending" && "Digest pending…"}
-          {digestStatus === "sending" && "Sending digest…"}
-          {digestStatus === "sent" && "Digest sent ✓"}
         </div>
       </header>
       {listings.length === 0 ? (
@@ -133,8 +138,57 @@ function InboxSetup() {
   );
 }
 
+function formatRelative(ms: number): string {
+  const minutes = Math.round(Math.abs(ms) / 60_000);
+  if (minutes < 1) return "less than a minute";
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
+
+function DigestBanner({ pendingCount }: { pendingCount: number }) {
+  const schedule = useQuery(api.digest.getSchedule);
+  const [, tick] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => tick((n) => n + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (!schedule) return null;
+
+  if (schedule.scheduledFor !== undefined) {
+    const remaining = schedule.scheduledFor - Date.now();
+    return (
+      <div className="digest-banner">
+        Digest with {pendingCount} listing{pendingCount === 1 ? "" : "s"} sends in{" "}
+        {remaining > 0 ? formatRelative(remaining) : "a moment"} — reply with "now" to send it
+        right away.
+      </div>
+    );
+  }
+
+  if (schedule.lastDigestAt !== undefined) {
+    return (
+      <div className="digest-banner digest-banner-idle">
+        Last digest sent {formatRelative(Date.now() - schedule.lastDigestAt)} ago. Forward a new
+        listing to start the next batch.
+      </div>
+    );
+  }
+
+  return null;
+}
+
 function App() {
   const overview = useQuery(api.dashboard.overview);
+  const pendingCount =
+    overview?.reduce(
+      (count, { listings }) =>
+        count +
+        listings.filter(
+          (l) => l.digestedAt === undefined && (l.status === "ranked" || l.status === "failed"),
+        ).length,
+      0,
+    ) ?? 0;
 
   return (
     <div className="app">
@@ -146,6 +200,7 @@ function App() {
       </header>
 
       <InboxSetup />
+      <DigestBanner pendingCount={pendingCount} />
 
       <main className="app-main">
         {overview === undefined ? (

@@ -11,6 +11,7 @@
 import type * as ai from "../ai.js";
 import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
+import type * as digest from "../digest.js";
 import type * as email from "../email.js";
 import type * as emails from "../emails.js";
 import type * as http from "../http.js";
@@ -29,6 +30,7 @@ declare const fullApi: ApiFromModules<{
   ai: typeof ai;
   crons: typeof crons;
   dashboard: typeof dashboard;
+  digest: typeof digest;
   email: typeof email;
   emails: typeof emails;
   http: typeof http;
@@ -67,4 +69,5 @@ export declare const internal: FilterApi<
 export declare const components: {
   firecrawl: import("@firecrawl/firecrawl-convex/_generated/component.js").ComponentApi<"firecrawl">;
   agentmail: import("@agentmail/convex/_generated/component.js").ComponentApi<"agentmail">;
+  staticHosting: import("@convex-dev/static-hosting/_generated/component.js").ComponentApi<"staticHosting">;
 };

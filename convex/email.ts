@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import { internal, components } from "./_generated/api";
 import { AgentMail } from "@agentmail/convex";
-import { extractListingUrls, extractPreferenceNote } from "./lib/extractUrls";
+import { extractListingUrls, extractPreferenceNote, parseDigestCommand } from "./lib/extractUrls";
 
 // Shared AgentMail handle: configured with the hook AgentMail calls on every
 // inbound message. Re-used by convex/http.ts so the webhook route dispatches
@@ -45,12 +45,14 @@ export const onMessageReceived = internalMutation({
     const urls = extractListingUrls(body);
     const preferenceNote = extractPreferenceNote(body);
 
+    const subject = message.subject as string | undefined;
+
     const emailId = await ctx.db.insert("emails", {
       agentmailMessageId: messageId,
       agentmailThreadId: threadId,
       inboxId,
       from: (message.from as string) ?? "unknown",
-      subject: message.subject as string | undefined,
+      subject,
       receivedAt: toMillis(message.timestamp ?? message.created_at),
       preferenceNote,
     });
@@ -63,5 +65,15 @@ export const onMessageReceived = internalMutation({
       });
       await ctx.scheduler.runAfter(0, internal.listings.scrapeListing, { listingId });
     }
+
+    // Every forward (even a "digest now" with no new links, or one whose
+    // listings haven't finished processing yet) reschedules the batched
+    // send — see convex/digest.ts.
+    const { immediate, category } = parseDigestCommand(subject, preferenceNote);
+    await ctx.runMutation(internal.digest.scheduleDigest, {
+      immediate,
+      requestedByEmailId: immediate ? emailId : undefined,
+      requestedCategory: immediate ? category : undefined,
+    });
   },
 });

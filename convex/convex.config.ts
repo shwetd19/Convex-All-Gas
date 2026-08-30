@@ -2,6 +2,7 @@ import { defineApp } from "convex/server";
 import { v } from "convex/values";
 import firecrawl from "@firecrawl/firecrawl-convex/convex.config";
 import agentmail from "@agentmail/convex/convex.config";
+import staticHosting from "@convex-dev/static-hosting/convex.config";
 
 // Only one-shot scrape() is used (no durable crawls), so no webhook route
 // needs to be mounted for Firecrawl here.
@@ -32,5 +33,8 @@ app.use(agentmail, {
     AGENTMAIL_BASE_URL: app.env.AGENTMAIL_BASE_URL,
   },
 });
+
+// Serves the built frontend from this deployment's convex.site URL.
+app.use(staticHosting); // keep app HTTP routes at root
 
 export default app;

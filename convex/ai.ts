@@ -2,7 +2,7 @@
 
 import { v } from "convex/values";
 import { internalAction } from "./_generated/server";
-import { internal, components } from "./_generated/api";
+import { internal, api, components } from "./_generated/api";
 import OpenAI from "openai";
 import { AgentMail } from "@agentmail/convex";
 
@@ -16,6 +16,13 @@ function getOpenAI() {
 
 const agentmail = new AgentMail(components.agentmail);
 const MODEL = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+
+const CATEGORY_LABEL: Record<string, string> = {
+  jobs: "Jobs",
+  flats: "Flats",
+  newsletter: "Newsletters",
+  other: "Other",
+};
 
 export const extractAndScore = internalAction({
   args: { listingId: v.id("listings") },
@@ -44,12 +51,13 @@ Listing content (markdown, may be truncated):
 ${listing.rawMarkdown.slice(0, 12000)}
 
 Respond with JSON matching exactly this shape:
-{"title": string, "price": string, "bedrooms": string, "location": string, "summary": string, "score": number, "scoreReason": string}
+{"title": string, "price": string, "bedrooms": string, "location": string, "summary": string, "score": number, "scoreReason": string, "category": "jobs" | "flats" | "newsletter" | "other"}
 
 - "summary": one or two factual sentences about the listing.
 - "score": 0-100, how well this matches the stated preferences (100 = perfect match). If there are no stated preferences, score general desirability/completeness of the listing instead.
 - "scoreReason": one sentence explaining the score.
-- Use "unknown" for any field you can't find in the content.`,
+- "category": "jobs" for a job posting/career page, "flats" for a rental/apartment/housing listing, "newsletter" for a digest/roundup/article page, "other" for anything else.
+- Use "unknown" for any string field you can't find in the content.`,
           },
         ],
         response_format: { type: "json_object" },
@@ -57,6 +65,8 @@ Respond with JSON matching exactly this shape:
 
       const raw = completion.choices[0]?.message?.content ?? "{}";
       const parsed = JSON.parse(raw);
+      const ALLOWED_CATEGORIES = ["jobs", "flats", "newsletter", "other"];
+      const category = ALLOWED_CATEGORIES.includes(parsed.category) ? parsed.category : "other";
 
       await ctx.runMutation(internal.listings.saveExtraction, {
         listingId,
@@ -69,6 +79,7 @@ Respond with JSON matching exactly this shape:
         },
         score: typeof parsed.score === "number" ? parsed.score : 0,
         scoreReason: typeof parsed.scoreReason === "string" ? parsed.scoreReason : undefined,
+        category,
       });
     } catch (err) {
       await ctx.runMutation(internal.listings.saveScrapeFailure, {
@@ -76,44 +87,81 @@ Respond with JSON matching exactly this shape:
         error: err instanceof Error ? err.message : String(err),
       });
     }
-
-    await ctx.runAction(internal.ai.maybeSendDigest, { emailId: listing.emailId });
   },
 });
 
-export const maybeSendDigest = internalAction({
-  args: { emailId: v.id("emails") },
-  handler: async (ctx, { emailId }) => {
-    const listings = await ctx.runQuery(internal.listings.listForEmailInternal, { emailId });
-    if (listings.length === 0) return;
+// Fired by the debounced schedule in convex/digest.ts — batches everything
+// forwarded (across possibly several emails) since the last digest into one
+// reply, sent in whichever thread was forwarded most recently.
+export const sendDigest = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const allPending = await ctx.runQuery(internal.digest.pendingListings, {});
+    const schedule = await ctx.runQuery(api.digest.getSchedule, {});
 
-    const settled = listings.every((l) => l.status === "ranked" || l.status === "failed");
-    if (!settled) return;
+    // An explicit "digest now" always gets a reply in its own thread, even
+    // with nothing pending — otherwise the request silently no-ops, which
+    // reads as a bug to whoever sent it.
+    const requestedEmail = schedule?.requestedByEmailId
+      ? await ctx.runQuery(internal.emails.getEmail, { emailId: schedule.requestedByEmailId })
+      : null;
 
-    const claimed = await ctx.runMutation(internal.emails.claimDigestSend, { emailId });
-    if (!claimed) return;
+    // "jobs now" / "flats now" scopes this send to one category, leaving
+    // the rest pending — the safety-net cron (or the next forward) will
+    // pick those up in a later batch, uncategorized sends are unaffected.
+    const category = schedule?.requestedCategory;
+    const pending = category
+      ? allPending.filter((row) => (row.listing.category ?? "other") === category)
+      : allPending;
 
-    const email = await ctx.runQuery(internal.emails.getEmail, { emailId });
-    if (!email) return;
+    if (pending.length === 0) {
+      if (requestedEmail) {
+        const scope = category ? `pending ${CATEGORY_LABEL[category]} listings` : "anything pending";
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await agentmail.replyToMessage(ctx as any, requestedEmail.inboxId, requestedEmail.agentmailMessageId, {
+          text: `You don't have any ${scope} right now. Forward a listing link (with your preferences) to get started — I'll batch everything you send and reply once things settle, or reply with "now" any time to flush immediately.`,
+        });
+      }
+      await ctx.runMutation(internal.digest.finishSchedule, {});
+      return;
+    }
 
-    const ranked = listings
-      .filter((l) => l.status === "ranked")
-      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    const target = requestedEmail
+      ? { email: requestedEmail }
+      : pending.reduce((latest, row) => (row.email.receivedAt > latest.email.receivedAt ? row : latest));
+
+    const preferenceNotes = Array.from(
+      new Set(pending.map((row) => row.email.preferenceNote).filter((n): n is string => !!n)),
+    );
+
+    const ranked = pending
+      .filter((row) => row.listing.status === "ranked")
+      .sort((a, b) => (b.listing.score ?? 0) - (a.listing.score ?? 0));
 
     let digestText: string;
     if (ranked.length === 0) {
       digestText =
         "None of the listings you sent could be processed. Try forwarding the links again, or check that the pages are publicly accessible.";
     } else {
-      const listingLines = ranked
-        .map((l, i) => {
-          const f = l.fields;
-          return `${i + 1}. ${f?.title ?? l.url} — score ${l.score}/100
+      const categories = Array.from(new Set(ranked.map((r) => r.listing.category ?? "other")));
+      const grouped = categories.length > 1;
+
+      const formatListing = ({ listing: l }: (typeof ranked)[number], i: number) => {
+        const f = l.fields;
+        return `${i + 1}. ${f?.title ?? l.url} — score ${l.score}/100
    ${[f?.price, f?.bedrooms, f?.location].filter(Boolean).join(" · ")}
    ${l.scoreReason ?? ""}
    ${l.url}`;
-        })
-        .join("\n\n");
+      };
+
+      const listingLines = grouped
+        ? categories
+            .map((cat) => {
+              const rows = ranked.filter((r) => (r.listing.category ?? "other") === cat);
+              return `## ${CATEGORY_LABEL[cat]}\n${rows.map(formatListing).join("\n\n")}`;
+            })
+            .join("\n\n")
+        : ranked.map(formatListing).join("\n\n");
 
       const openai = getOpenAI();
       const completion = await openai.chat.completions.create({
@@ -126,12 +174,12 @@ export const maybeSendDigest = internalAction({
           },
           {
             role: "user",
-            content: `User preferences: ${email.preferenceNote ?? "none stated"}
+            content: `User preferences: ${preferenceNotes.join(" | ") || "none stated"}
 
-Ranked listings, best match first:
+Ranked listings, best match first${grouped ? ", grouped by category with ## headers" : ""}:
 ${listingLines}
 
-Write a short digest email: a 1-2 sentence intro, then the ranked list (one line each is fine), then a brief sign-off. Keep every listing URL intact and exactly as given.`,
+Write a short digest email: a 1-2 sentence intro, then the ranked list${grouped ? " (keep the category section headers, one per group)" : " (one line each is fine)"}, then a brief sign-off. Keep every listing URL intact and exactly as given.`,
           },
         ],
       });
@@ -142,13 +190,16 @@ Write a short digest email: a 1-2 sentence intro, then the ranked list (one line
     // `transactionLimits` runMutation overload; the extra param is additive
     // and backward-compatible at runtime, so this cast is safe.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await agentmail.replyToMessage(ctx as any, email.inboxId, email.agentmailMessageId, {
+    await agentmail.replyToMessage(ctx as any, target.email.inboxId, target.email.agentmailMessageId, {
       text: digestText,
     });
 
+    const listingIds = pending.map((row) => row.listing._id);
+    await ctx.runMutation(internal.digest.markDigested, { listingIds });
+    await ctx.runMutation(internal.digest.finishSchedule, {});
     await ctx.runMutation(internal.emails.saveDigest, {
-      emailId,
-      agentmailThreadId: email.agentmailThreadId,
+      agentmailThreadId: target.email.agentmailThreadId,
+      listingIds,
       body: digestText,
       listingCount: ranked.length,
     });
