@@ -2,17 +2,18 @@
 
 - **Project:** Sift (formerly Listing Digest)
 - **Event:** Convex All Gas Hackathon
-- **What it does:** Forward listing emails (apartments, jobs, newsletters) with a preference note; it scrapes and ranks the links live, then batches everything into one categorized digest reply — immediately on request ("digest now" / "jobs now"), or after a quiet period.
+- **What it does:** Forward job alerts (or apartment listings, newsletters) with a one-line note of what you want; every link is scraped, scored, and batched into one ranked email — then reply "skip #2" / "more like #3" to steer how the next batch is ranked.
+- **Demo video:** not recorded yet
 - **Live app:** https://flippant-stork-696.convex.site
 - **Repo:** https://github.com/shwetd19/Convex-All-Gas
 - **Frontend:** Convex static hosting
 - **Convex deployment:** https://flippant-stork-696.convex.cloud
 - **Components:** @agentmail/convex, @firecrawl/firecrawl-convex, @convex-dev/static-hosting
-- **Convex features:** schema, indexes, queries, mutations, actions, internal functions, HTTP actions, crons, scheduled functions, realtime queries
-- **Auth:** none
+- **Convex features:** schema, indexes, queries, mutations, actions, internal functions, HTTP actions, crons, scheduled functions (cancel + reschedule), realtime queries, Convex Auth
+- **Auth:** Convex Auth
 - **AI models:** gpt-4o-mini
 - **Started:** 2026-08-27T11:01:54Z
-- **Last updated:** 2026-08-29T11:08:47Z
+- **Last updated:** 2026-08-30T16:26:54Z
 
 ## Log
 
@@ -47,3 +48,20 @@ the batched digest groups by category and a request can scope to one ("jobs now"
 leaving the rest pending. Migrated both deployments' existing data (backfilled `digestedAt` on
 already-digested listings, cleared the old per-email `digestSentAt` field) with the safety-net
 cron briefly disabled to avoid a spurious resend during the migration window.
+
+### 2026-08-30 - 1c0cdbb
+Renamed to Sift and reframed around job hunting. Added login with Convex Auth (`convex/auth.ts`);
+one shared inbox still serves everyone, but the dashboard and — after finding that the digest
+queue was still global — the whole batching pipeline are now scoped per forwarder
+(`digestSchedule.by_owner`, `convex/digest.ts`), so two people sharing the inbox never get
+mixed into one digest. Built the reply-to-steer loop: a reply in a digest thread is parsed
+("skip #2", "more like #3", or plain English via one OpenAI call), stored in a `feedback` table
+(`convex/feedback.ts`), fed into every future scoring prompt (`convex/ai.ts`), and confirmed
+in-thread; the dashboard shows the rules with a remove button. Digests are now numbered
+continuously and store their ranked order so replies resolve. Dashboard additions: stats strip,
+per-second countdown, batch progress bar, "Send digest now", sent-digest history, `/docs`.
+Fixed along the way: forwarded subjects ("...Apply Now") triggering the send command;
+HTML-only marketing emails producing zero links; 28 tracking-URL variants of the same 6
+postings; long URLs/error stacks overflowing the layout. Convex features: schema, indexes,
+queries, mutations, actions, HTTP actions, crons, scheduler cancel/reschedule, realtime queries,
+Convex Auth, static hosting.
