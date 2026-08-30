@@ -2,6 +2,7 @@ import { useAction, useQuery } from "convex/react";
 import { useEffect, useState } from "react";
 import { api } from "../convex/_generated/api";
 import type { Doc } from "../convex/_generated/dataModel";
+import Docs from "./Docs";
 import "./App.css";
 
 type ListingDoc = Doc<"listings">;
@@ -178,7 +179,7 @@ function DigestBanner({ pendingCount }: { pendingCount: number }) {
   return null;
 }
 
-function App() {
+function Dashboard() {
   const overview = useQuery(api.dashboard.overview);
   const pendingCount =
     overview?.reduce(
@@ -193,7 +194,12 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>Listing Digest</h1>
+        <div className="app-header-top">
+          <h1>Listing Digest</h1>
+          <a href="/docs" className="docs-link">
+            How to use
+          </a>
+        </div>
         <p className="app-tagline">
           Forward listings, watch them get scraped and ranked live, get a digest back by email.
         </p>
@@ -218,6 +224,10 @@ function App() {
       </main>
     </div>
   );
+}
+
+function App() {
+  return window.location.pathname === "/docs" ? <Docs /> : <Dashboard />;
 }
 
 export default App;
