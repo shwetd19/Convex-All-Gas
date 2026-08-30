@@ -30,6 +30,7 @@ function SignInForm() {
   return (
     <div className="auth-screen">
       <div className="auth-card">
+        <img src="/logo.svg" alt="" className="auth-logo" width="44" height="44" />
         <h1>Listing Digest</h1>
         <p className="app-tagline">Sign in to see the listings you've forwarded.</p>
 

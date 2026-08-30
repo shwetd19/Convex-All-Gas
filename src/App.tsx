@@ -392,7 +392,10 @@ function Dashboard() {
     <div className="app">
       <header className="app-header">
         <div className="app-header-top">
-          <h1>Listing Digest</h1>
+          <div className="brand">
+            <img src="/logo.svg" alt="" className="brand-logo" width="36" height="36" />
+            <h1>Listing Digest</h1>
+          </div>
           <div className="app-header-actions">
             <a href="/docs" className="docs-link">
               How to use
