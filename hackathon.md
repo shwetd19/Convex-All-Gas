@@ -3,7 +3,6 @@
 - **Project:** Sift (formerly Listing Digest)
 - **Event:** Convex All Gas Hackathon
 - **What it does:** Forward job alerts (or apartment listings, newsletters) with a one-line note of what you want; every link is scraped, scored, and batched into one ranked email — then reply "skip #2" / "more like #3" to steer how the next batch is ranked.
-- **Demo video:** not recorded yet
 - **Live app:** https://flippant-stork-696.convex.site
 - **Repo:** https://github.com/shwetd19/Convex-All-Gas
 - **Frontend:** Convex static hosting
