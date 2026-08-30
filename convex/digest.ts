@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { internalMutation, internalQuery, query } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { categoryValidator } from "./schema";
 import { getAuthUserId } from "@convex-dev/auth/server";
@@ -137,6 +137,23 @@ export const getScheduleForOwner = internalQuery({
       .query("digestSchedule")
       .withIndex("by_owner", (q) => q.eq("ownerEmail", ownerEmail))
       .unique(),
+});
+
+// Public: the dashboard's "Send digest now" button — same effect as
+// emailing "now", but for whoever is signed in. sendDigest replies in
+// the thread of their most recent forward.
+export const requestNow = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not signed in");
+    const user = await ctx.db.get(userId);
+    if (!user?.email) throw new Error("Account has no email");
+    await ctx.runMutation(internal.digest.scheduleDigest, {
+      ownerEmail: user.email.toLowerCase(),
+      immediate: true,
+    });
+  },
 });
 
 // Public: the signed-in user's own schedule row, for the dashboard banner.

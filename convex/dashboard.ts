@@ -31,3 +31,31 @@ export const overview = query({
     return results;
   },
 });
+
+// The signed-in user's sent digests, newest first. A digest row only
+// records the thread it was sent in, so ownership is resolved by looking
+// up an email in that thread and matching its From: address.
+export const digestHistory = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    const user = await ctx.db.get(userId);
+    if (!user?.email) return null;
+    const myEmail = user.email.toLowerCase();
+
+    const digests = await ctx.db.query("digests").order("desc").take(50);
+    const mine = [];
+    for (const digest of digests) {
+      const email = await ctx.db
+        .query("emails")
+        .withIndex("by_thread", (q) => q.eq("agentmailThreadId", digest.agentmailThreadId))
+        .first();
+      if (email && extractEmailAddress(email.from) === myEmail) {
+        mine.push({ ...digest, subject: email.subject });
+      }
+      if (mine.length >= 10) break;
+    }
+    return mine;
+  },
+});

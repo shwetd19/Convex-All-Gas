@@ -226,9 +226,140 @@ body {
   color: #9aa1ab;
 }
 
+.digest-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .digest-countdown {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
+}
+
+.send-now-button {
+  background: #6ee7b7;
+  color: #0f1115;
+  border: none;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.send-now-button:hover:not(:disabled) {
+  background: #a7f3d0;
+}
+
+.send-now-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.stats-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.stat {
+  background: #14171d;
+  border: 1px solid #262b35;
+  border-radius: 10px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #9aa1ab;
+}
+
+.digest-history {
+  margin-top: 36px;
+}
+
+.digest-history h2 {
+  font-size: 16px;
+  margin: 0 0 12px;
+}
+
+.digest-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.digest-item {
+  background: #14171d;
+  border: 1px solid #262b35;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.digest-item-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  background: none;
+  border: none;
+  color: #e6e8eb;
+  padding: 12px 16px;
+  font-size: 13.5px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.digest-item-header:hover {
+  background: #171a21;
+}
+
+.digest-item-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.digest-item-time {
+  color: #9aa1ab;
+  font-size: 12.5px;
+  white-space: nowrap;
+  display: inline-flex;
+  gap: 8px;
+}
+
+.digest-item-chevron {
+  color: #6ee7b7;
+}
+
+.digest-item-body {
+  margin: 0;
+  padding: 12px 16px 16px;
+  border-top: 1px solid #262b35;
+  color: #c7ccd4;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .batch-progress {

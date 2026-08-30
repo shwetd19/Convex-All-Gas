@@ -1,4 +1,4 @@
-import { useAction, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { useEffect, useState } from "react";
 import { useAuthActions, useConvexAuth } from "@convex-dev/auth/react";
 import { api } from "../convex/_generated/api";
@@ -233,6 +233,27 @@ function formatCountdown(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+function SendNowButton({ disabled }: { disabled: boolean }) {
+  const requestNow = useMutation(api.digest.requestNow);
+  const [sending, setSending] = useState(false);
+  return (
+    <button
+      className="send-now-button"
+      disabled={disabled || sending}
+      onClick={async () => {
+        setSending(true);
+        try {
+          await requestNow();
+        } finally {
+          setSending(false);
+        }
+      }}
+    >
+      {sending ? "Sending…" : "Send digest now"}
+    </button>
+  );
+}
+
 function DigestBanner({ pendingCount }: { pendingCount: number }) {
   const schedule = useQuery(api.digest.getSchedule);
   const [, tick] = useState(0);
@@ -251,11 +272,13 @@ function DigestBanner({ pendingCount }: { pendingCount: number }) {
     const remaining = schedule.scheduledFor - Date.now();
     return (
       <div className="digest-banner">
-        Digest with {pendingCount} listing{pendingCount === 1 ? "" : "s"} sends in{" "}
-        <span className="digest-countdown">
-          {remaining > 0 ? formatCountdown(remaining) : "0:00"}
-        </span>{" "}
-        — reply with "now" to send it right away.
+        <span>
+          Digest with {pendingCount} listing{pendingCount === 1 ? "" : "s"} sends in{" "}
+          <span className="digest-countdown">
+            {remaining > 0 ? formatCountdown(remaining) : "0:00"}
+          </span>
+        </span>
+        <SendNowButton disabled={pendingCount === 0} />
       </div>
     );
   }
@@ -270,6 +293,71 @@ function DigestBanner({ pendingCount }: { pendingCount: number }) {
   }
 
   return null;
+}
+
+function StatsStrip({
+  forwarded,
+  ranked,
+  digests,
+}: {
+  forwarded: number;
+  ranked: number;
+  digests: number;
+}) {
+  return (
+    <div className="stats-strip">
+      <div className="stat">
+        <span className="stat-value">{forwarded}</span>
+        <span className="stat-label">emails forwarded</span>
+      </div>
+      <div className="stat">
+        <span className="stat-value">{ranked}</span>
+        <span className="stat-label">listings ranked</span>
+      </div>
+      <div className="stat">
+        <span className="stat-value">{digests}</span>
+        <span className="stat-label">digests sent</span>
+      </div>
+    </div>
+  );
+}
+
+function DigestHistory() {
+  const digests = useQuery(api.dashboard.digestHistory);
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  if (!digests || digests.length === 0) return null;
+
+  return (
+    <section className="digest-history">
+      <h2>Digests sent</h2>
+      <ul className="digest-list">
+        {digests.map((d) => {
+          const open = openId === d._id;
+          return (
+            <li key={d._id} className="digest-item">
+              <button className="digest-item-header" onClick={() => setOpenId(open ? null : d._id)}>
+                <span className="digest-item-title">
+                  {d.listingCount} listing{d.listingCount === 1 ? "" : "s"}
+                  {d.subject ? ` · re: ${d.subject}` : ""}
+                </span>
+                <span className="digest-item-time">
+                  {new Date(d.sentAt).toLocaleString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                  <span className="digest-item-chevron">{open ? "▾" : "▸"}</span>
+                </span>
+              </button>
+              {open && <pre className="digest-item-body">{d.body}</pre>}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
 }
 
 function AccountBar() {
@@ -291,8 +379,11 @@ function AccountBar() {
 function Dashboard() {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const overview = useQuery(api.dashboard.overview);
-  const currentBatch = overview?.flatMap(({ listings }) => listings).filter((l) => l.digestedAt === undefined) ?? [];
+  const digestHistory = useQuery(api.dashboard.digestHistory);
+  const allListings = overview?.flatMap(({ listings }) => listings) ?? [];
+  const currentBatch = allListings.filter((l) => l.digestedAt === undefined);
   const pendingCount = currentBatch.filter((l) => l.status === "ranked" || l.status === "failed").length;
+  const rankedCount = allListings.filter((l) => l.status === "ranked").length;
 
   if (isLoading) return null;
   if (!isAuthenticated) return <SignInForm />;
@@ -315,6 +406,11 @@ function Dashboard() {
       </header>
 
       <InboxSetup />
+      <StatsStrip
+        forwarded={overview?.length ?? 0}
+        ranked={rankedCount}
+        digests={digestHistory?.length ?? 0}
+      />
       <DigestBanner pendingCount={pendingCount} />
       <BatchProgress listings={currentBatch} />
 
@@ -332,6 +428,8 @@ function Dashboard() {
           ))
         )}
       </main>
+
+      <DigestHistory />
     </div>
   );
 }
