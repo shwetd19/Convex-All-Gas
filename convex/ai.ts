@@ -2,7 +2,7 @@
 
 import { v } from "convex/values";
 import { internalAction } from "./_generated/server";
-import { internal, api, components } from "./_generated/api";
+import { internal, components } from "./_generated/api";
 import OpenAI from "openai";
 import { AgentMail } from "@agentmail/convex";
 
@@ -91,13 +91,15 @@ Respond with JSON matching exactly this shape:
 });
 
 // Fired by the debounced schedule in convex/digest.ts — batches everything
-// forwarded (across possibly several emails) since the last digest into one
-// reply, sent in whichever thread was forwarded most recently.
+// one forwarder (ownerEmail) has sent since their last digest into one
+// reply, sent in whichever of their threads was forwarded most recently.
+// Runs as a scheduled function with no signed-in user, so ownerEmail (baked
+// in when this was scheduled) is how it knows whose batch to process.
 export const sendDigest = internalAction({
-  args: {},
-  handler: async (ctx) => {
-    const allPending = await ctx.runQuery(internal.digest.pendingListings, {});
-    const schedule = await ctx.runQuery(api.digest.getSchedule, {});
+  args: { ownerEmail: v.string() },
+  handler: async (ctx, { ownerEmail }) => {
+    const allPending = await ctx.runQuery(internal.digest.pendingListings, { ownerEmail });
+    const schedule = await ctx.runQuery(internal.digest.getScheduleForOwner, { ownerEmail });
 
     // An explicit "digest now" always gets a reply in its own thread, even
     // with nothing pending — otherwise the request silently no-ops, which
@@ -122,7 +124,7 @@ export const sendDigest = internalAction({
           text: `You don't have any ${scope} right now. Forward a listing link (with your preferences) to get started — I'll batch everything you send and reply once things settle, or reply with "now" any time to flush immediately.`,
         });
       }
-      await ctx.runMutation(internal.digest.finishSchedule, {});
+      await ctx.runMutation(internal.digest.finishSchedule, { ownerEmail });
       return;
     }
 
@@ -196,7 +198,7 @@ Write a short digest email: a 1-2 sentence intro, then the ranked list${grouped 
 
     const listingIds = pending.map((row) => row.listing._id);
     await ctx.runMutation(internal.digest.markDigested, { listingIds });
-    await ctx.runMutation(internal.digest.finishSchedule, {});
+    await ctx.runMutation(internal.digest.finishSchedule, { ownerEmail });
     await ctx.runMutation(internal.emails.saveDigest, {
       agentmailThreadId: target.email.agentmailThreadId,
       listingIds,

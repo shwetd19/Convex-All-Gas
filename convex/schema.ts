@@ -79,11 +79,17 @@ export default defineSchema({
     sentAt: v.number(),
   }),
 
-  // Singleton row (one inbox for the whole app) tracking the debounced
-  // digest send: every new forward pushes the scheduled send time out:
-  // convex/digest.ts's scheduleDigest cancels scheduledFunctionId and
-  // reschedules, so a burst of forwards only ever fires one send.
+  // One row per forwarder (keyed by the lowercased address they forward
+  // from — see convex/lib/parseFrom.ts) tracking their own debounced digest
+  // send: every new forward from that address pushes their scheduled send
+  // time out, so a burst of forwards from one person only fires one send,
+  // and two people sharing the inbox never get their listings mixed into
+  // each other's digest. ownerEmail is optional only because one row
+  // predates this per-owner design (from when there was a single global
+  // schedule) — it's permanently orphaned, never matched by a by_owner
+  // query, and harmless to leave in place.
   digestSchedule: defineTable({
+    ownerEmail: v.optional(v.string()),
     scheduledFunctionId: v.optional(v.id("_scheduled_functions")),
     scheduledFor: v.optional(v.number()),
     lastDigestAt: v.optional(v.number()),
@@ -93,5 +99,5 @@ export default defineSchema({
     // Set only when the "now" request named a category ("jobs now") —
     // scopes that immediate send to just this category.
     requestedCategory: v.optional(categoryValidator),
-  }),
+  }).index("by_owner", ["ownerEmail"]),
 });
