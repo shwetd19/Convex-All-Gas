@@ -1,4 +1,5 @@
 const URL_RE = /https?:\/\/[^\s"'<>)\]]+/gi;
+const HREF_RE = /href\s*=\s*["']([^"']+)["']/gi;
 
 const EXCLUDED_HOST_SUBSTRINGS = [
   "unsubscribe",
@@ -8,6 +9,28 @@ const EXCLUDED_HOST_SUBSTRINGS = [
   "list-manage.com",
   "sendgrid.net",
   "mailchimp.com",
+  "awstrack.me",
+  // Social profiles / app store links: never a listing, common noise in
+  // marketing-style forwards, and wasteful to burn Firecrawl calls on.
+  "twitter.com/",
+  "x.com/",
+  "facebook.com/",
+  "instagram.com/",
+  "apps.apple.com",
+  "itunes.apple.com",
+  "play.google.com",
+  // LinkedIn navigation chrome that rides along in every job-alert email —
+  // keep linkedin.com/*/jobs/view/... (the actual postings) by only
+  // excluding these specific non-listing paths.
+  "linkedin.com/comm/feed",
+  "linkedin.com/comm/messaging",
+  "linkedin.com/comm/mynetwork",
+  "linkedin.com/comm/notifications",
+  "linkedin.com/comm/in/me",
+  "linkedin.com/help/",
+  "linkedin.com/company/",
+  "linkedin.com/comm/jobs/alerts",
+  "linkedin.com/comm/jobs/search-results",
 ];
 
 const EXCLUDED_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".svg", ".css", ".ico"];
@@ -23,14 +46,25 @@ function isLikelyListingUrl(url: string): boolean {
   return true;
 }
 
+function extractHrefUrls(html: string): string[] {
+  const urls: string[] = [];
+  for (const match of html.matchAll(HREF_RE)) {
+    if (/^https?:\/\//i.test(match[1])) urls.push(match[1]);
+  }
+  return urls;
+}
+
 /**
- * Pulls candidate listing URLs out of a forwarded email body (text or HTML).
- * Preference notes ride along as plain text in the same body, so this only
- * extracts URLs — the preference note is parsed separately.
+ * Pulls candidate listing URLs out of a forwarded email. Checks both parts:
+ * many marketing-style emails ship a plaintext part that's mostly spam-filter
+ * padding with no real links, while the actual links only exist as `href`s
+ * in the HTML part — so relying on just one representation misses links the
+ * other has.
  */
-export function extractListingUrls(body: string): string[] {
-  const matches = body.match(URL_RE) ?? [];
-  const cleaned = matches.map(stripTrailingPunctuation).filter(isLikelyListingUrl);
+export function extractListingUrls(text: string, html?: string): string[] {
+  const fromText = text.match(URL_RE) ?? [];
+  const fromHtml = html ? extractHrefUrls(html) : [];
+  const cleaned = [...fromText, ...fromHtml].map(stripTrailingPunctuation).filter(isLikelyListingUrl);
   return Array.from(new Set(cleaned));
 }
 
@@ -62,6 +96,7 @@ export function extractPreferenceNote(body: string): string | undefined {
 export type ListingCategory = "jobs" | "flats" | "newsletter" | "other";
 
 const IMMEDIATE_DIGEST_RE = /\b(now|digest)\b/i;
+const FORWARD_SUBJECT_RE = /^\s*(fwd?|fw)\s*:/i;
 
 const CATEGORY_KEYWORDS: [ListingCategory, RegExp][] = [
   ["jobs", /\bjobs?\b/i],
@@ -70,17 +105,22 @@ const CATEGORY_KEYWORDS: [ListingCategory, RegExp][] = [
 ];
 
 /**
- * "Send now" override, checked against the subject and the user's own note
- * (not the full body, which may quote forwarded ad copy containing these
- * words incidentally). An optional category keyword ("jobs now", "flats
- * digest") scopes the immediate send to just that category, leaving the
- * rest pending for the normal batch.
+ * "Send now" override, checked against the user's own note and — only when
+ * it's NOT a forward — the subject. A forwarded email's subject belongs to
+ * whoever originally sent it (job alerts routinely end in "...Apply Now.",
+ * "...12 more jobs..."), so trusting it would fire on nearly every forward;
+ * a subject the user typed themselves (no "Fwd:"/"Fw:" prefix) is exactly
+ * how the "digest now" no-links command email is meant to work, so that
+ * stays trusted. An optional category keyword ("jobs now", "flats digest")
+ * scopes the immediate send to just that category, leaving the rest pending
+ * for the normal batch.
  */
 export function parseDigestCommand(
   subject: string | undefined,
   preferenceNote: string | undefined,
 ): { immediate: boolean; category?: ListingCategory } {
-  const text = `${subject ?? ""} ${preferenceNote ?? ""}`;
+  const trustedSubject = subject && !FORWARD_SUBJECT_RE.test(subject) ? subject : "";
+  const text = `${trustedSubject} ${preferenceNote ?? ""}`;
   if (!IMMEDIATE_DIGEST_RE.test(text)) return { immediate: false };
   for (const [category, re] of CATEGORY_KEYWORDS) {
     if (re.test(text)) return { immediate: true, category };

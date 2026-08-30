@@ -41,9 +41,10 @@ export const onMessageReceived = internalMutation({
       .unique();
     if (existing) return;
 
-    const body = ((message.text ?? message.html ?? "") as string).toString();
-    const urls = extractListingUrls(body);
-    const preferenceNote = extractPreferenceNote(body);
+    const text = ((message.text ?? "") as string).toString();
+    const html = ((message.html ?? "") as string).toString();
+    const urls = extractListingUrls(text, html);
+    const preferenceNote = extractPreferenceNote(text || html);
 
     const subject = message.subject as string | undefined;
 
