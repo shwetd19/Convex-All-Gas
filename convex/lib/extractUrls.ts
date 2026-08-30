@@ -26,7 +26,7 @@ const EXCLUDED_HOST_SUBSTRINGS = [
   "linkedin.com/comm/messaging",
   "linkedin.com/comm/mynetwork",
   "linkedin.com/comm/notifications",
-  "linkedin.com/comm/in/me",
+  "linkedin.com/comm/in/",
   "linkedin.com/help/",
   "linkedin.com/company/",
   "linkedin.com/comm/jobs/alerts",
@@ -37,6 +37,10 @@ const EXCLUDED_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".svg", ".css", ".
 
 function stripTrailingPunctuation(url: string): string {
   return url.replace(/[.,;:!?)\]]+$/, "");
+}
+
+function decodeHtmlEntities(url: string): string {
+  return url.replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"');
 }
 
 function isLikelyListingUrl(url: string): boolean {
@@ -55,6 +59,31 @@ function extractHrefUrls(html: string): string[] {
 }
 
 /**
+ * Marketing/notification emails attach a different tracking query string to
+ * the same link every place it appears (company logo, title, "apply" button
+ * all point at the same job but with distinct trk/eid/otpToken params), and
+ * mix raw & HTML-entity-encoded ("&amp;") copies of the same URL. Dedupe on
+ * origin+pathname — for the platforms these links come from, the path alone
+ * (e.g. /jobs/view/4456216429/) identifies the actual page; the query string
+ * is single-use tracking cruft. Keeps the first-seen full form so trailing
+ * punctuation stripping etc. still has something concrete to work with.
+ */
+function dedupeByPath(urls: string[]): string[] {
+  const seen = new Map<string, string>();
+  for (const url of urls) {
+    let key = url;
+    try {
+      const parsed = new URL(url);
+      key = `${parsed.origin}${parsed.pathname}`;
+    } catch {
+      // Malformed URL — fall back to deduping on the raw string.
+    }
+    if (!seen.has(key)) seen.set(key, url);
+  }
+  return Array.from(seen.values());
+}
+
+/**
  * Pulls candidate listing URLs out of a forwarded email. Checks both parts:
  * many marketing-style emails ship a plaintext part that's mostly spam-filter
  * padding with no real links, while the actual links only exist as `href`s
@@ -64,8 +93,11 @@ function extractHrefUrls(html: string): string[] {
 export function extractListingUrls(text: string, html?: string): string[] {
   const fromText = text.match(URL_RE) ?? [];
   const fromHtml = html ? extractHrefUrls(html) : [];
-  const cleaned = [...fromText, ...fromHtml].map(stripTrailingPunctuation).filter(isLikelyListingUrl);
-  return Array.from(new Set(cleaned));
+  const cleaned = [...fromText, ...fromHtml]
+    .map(decodeHtmlEntities)
+    .map(stripTrailingPunctuation)
+    .filter(isLikelyListingUrl);
+  return dedupeByPath(cleaned);
 }
 
 /**
