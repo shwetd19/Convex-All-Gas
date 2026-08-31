@@ -133,6 +133,7 @@ export default defineSchema({
       v.literal("follow_up"),
       v.literal("reply"),
       v.literal("auto_reply"),
+      v.literal("manual_reply"),
     ),
     subject: v.optional(v.string()),
     text: v.string(),

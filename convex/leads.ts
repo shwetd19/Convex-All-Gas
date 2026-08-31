@@ -189,3 +189,42 @@ export const setStatus = internalMutation({
   args: { leadId: v.id("leads"), status: leadStatusValidator },
   handler: (ctx, { leadId, status }) => ctx.db.patch(leadId, { status }),
 });
+
+// PlaceIds already stored for a business — lets a rescan filter its
+// candidate pool before spending LLM triage on known places.
+export const listPlaceIds = internalQuery({
+  args: { businessId: v.id("businesses") },
+  handler: async (ctx, { businessId }) => {
+    const leads = await ctx.db
+      .query("leads")
+      .withIndex("by_businessId", (q) => q.eq("businessId", businessId))
+      .take(1000);
+    return leads.map((l) => l.placeId).filter((p): p is string => !!p);
+  },
+});
+
+// Second-pass enrichment: contact email + site evidence found by the
+// deep scrape after the fast metadata triage stored the lead.
+export const saveEnrichment = internalMutation({
+  args: {
+    leadId: v.id("leads"),
+    contactEmail: v.optional(v.string()),
+    evidence: v.optional(v.string()),
+  },
+  handler: async (ctx, { leadId, contactEmail, evidence }) => {
+    const lead = await ctx.db.get(leadId);
+    if (!lead) return;
+    const patch: Record<string, unknown> = {};
+    if (contactEmail && !lead.contactEmail) patch.contactEmail = contactEmail;
+    if (evidence && !lead.evidence) patch.evidence = evidence;
+    if (Object.keys(patch).length > 0) await ctx.db.patch(leadId, patch);
+    if (contactEmail && !lead.contactEmail) {
+      await ctx.db.insert("activity", {
+        businessId: lead.businessId,
+        leadId,
+        kind: "sourcing",
+        message: `Found contact for ${lead.name} (${contactEmail}) — drafting outreach`,
+      });
+    }
+  },
+});

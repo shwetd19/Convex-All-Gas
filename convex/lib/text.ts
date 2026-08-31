@@ -34,6 +34,30 @@ export function htmlToText(html: string): string {
     .trim();
 }
 
+/**
+ * Plain-text email body → simple, deliverability-friendly HTML: paragraphs,
+ * line breaks, and "- " bullet groups. Used alongside the text part so
+ * outgoing mail renders cleanly in real clients.
+ */
+export function textToHtml(text: string): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const blocks = text.trim().split(/\n{2,}/);
+  const html = blocks
+    .map((block) => {
+      const lines = block.split("\n");
+      if (lines.length > 1 && lines.every((l) => l.trim().startsWith("- "))) {
+        const items = lines
+          .map((l) => `<li style="margin:0 0 4px">${esc(l.trim().slice(2))}</li>`)
+          .join("");
+        return `<ul style="margin:0 0 14px;padding-left:20px">${items}</ul>`;
+      }
+      return `<p style="margin:0 0 14px">${lines.map(esc).join("<br/>")}</p>`;
+    })
+    .join("");
+  return `<div style="font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.6;color:#111827;max-width:560px">${html}</div>`;
+}
+
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 
 // Addresses that show up in scraped pages but are never a real contact:

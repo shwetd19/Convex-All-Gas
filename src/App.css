@@ -1209,6 +1209,22 @@ a {
   color: #fff;
 }
 
+.kind-manual_reply {
+  background: var(--success);
+  border-color: var(--success);
+  color: #fff;
+}
+
+.reply-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
 .thread-subject {
   font-weight: 700;
   font-size: 13.5px;

@@ -3,6 +3,12 @@
 // The agentic pipeline (PLAN.md): Firecrawl scrapes real pages, Google
 // Places grounds "what's physically nearby", OpenAI judges/drafts/classifies
 // over that grounded data, AgentMail sends from the app's own inbox.
+//
+// Sourcing is two-tier for volume: a wide grounded candidate pool from
+// several Places searches is triaged in batched LLM calls from metadata
+// (fast, no scraping), every kept lead lands immediately, and the deep
+// scrape (contact email + evidence + draft) runs for the top-scored leads
+// inside the 5-minute scan budget.
 
 import { v } from "convex/values";
 import { internalAction, type ActionCtx } from "./_generated/server";
@@ -11,27 +17,29 @@ import OpenAI from "openai";
 import { FirecrawlClient } from "@firecrawl/firecrawl-convex";
 import { agentmailApiFetch } from "./lib/agentmailRest";
 import { searchNearbyPlaces, searchTextPlaces, type Place } from "./lib/places";
-import { extractEmails } from "./lib/text";
-import type { Id } from "./_generated/dataModel";
+import { extractEmails, textToHtml } from "./lib/text";
+import type { Id, Doc } from "./_generated/dataModel";
 
 const firecrawl = new FirecrawlClient(components.firecrawl);
 const MODEL = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
 
-// Small fixed radius so demo data stays reliable (PLAN.md guardrail).
-const RADIUS_METERS = 1200;
-const NEARBY_CAP = 10;
-const OFFICE_CAP = 4;
-const CUSTOMER_CAP = 5;
-const EVENT_PICKS = 3;
-
 // Per-company scan budget: everything one scan schedules must run within
-// this window — after it passes, remaining candidates are dropped. Keeps
-// Google Places / Firecrawl usage strictly bounded per business.
+// this window — after it passes, remaining work is dropped. Keeps Google
+// Places / Firecrawl usage strictly bounded per business.
 const SCAN_BUDGET_MS = 5 * 60 * 1000;
+// Spacing between deep-enrichment scrapes (Firecrawl free-tier friendly).
+const ENRICH_SPACING_MS = 10_000;
+// Metadata-triage batch size and keep threshold.
+const TRIAGE_CHUNK = 40;
+const MIN_SCORE = 30;
+const EVENT_PICKS = 5;
+// Grace period before the agent answers an inbound reply on the owner's
+// behalf — the owner is notified immediately and can reply themselves.
+const AUTO_REPLY_DELAY_MS = 60 * 60 * 1000;
 
 // Lazy construction: the OpenAI client throws in its constructor if the key
-// is missing, and Convex bundles every module at push time — build it inside
-// handlers so a missing key only fails the function that needs it.
+// is missing — build it inside handlers so a missing key only fails the
+// function that needs it.
 function getOpenAI() {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
@@ -52,8 +60,7 @@ async function askJson(system: string, user: string): Promise<any> {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Firecrawl's free tier caps requests per minute, and its 429s say how long
-// to wait ("please retry after 4s"). Honor that instead of failing the
-// candidate — a scan fans out over many scrapes and will brush the cap.
+// to wait — honor that instead of failing the lead.
 async function scrapeMarkdown(ctx: ActionCtx, url: string): Promise<string> {
   const ATTEMPTS = 4;
   for (let attempt = 1; ; attempt++) {
@@ -106,6 +113,12 @@ function businessProfileText(business: {
     .join("\n");
 }
 
+const CLASSIFICATION_TEXT: Record<string, string> = {
+  interested: "interested",
+  not_interested: "not interested",
+  needs_info: "needs info",
+};
+
 // ---------------------------------------------------------------- intake
 
 // Onboarding step 2: read the user's own site, parse a profile, resolve the
@@ -133,7 +146,7 @@ Respond with JSON exactly matching:
 
 - "description": 1-2 factual sentences about what this business sells or does, including price points or specialties if visible.
 - "offerings": up to 6 concrete products/services actually mentioned.
-- "category": a short label like "coffee shop", "bakery", "yoga studio", "bookstore".
+- "category": a short label like "coffee shop", "bakery", "yoga studio", "IT services".
 - "address" / "city": the street address and city if the site shows them, else "unknown".`,
       );
 
@@ -173,8 +186,129 @@ Respond with JSON exactly matching:
 
 // -------------------------------------------------------------- sourcing
 
-// Google Places (real nearby entities) → Firecrawl (real content) →
-// OpenAI (judgment) → Convex (lead). Also kicks off the events branch.
+type Candidate = { place: Place; hint: "nearby" | "office" | "customer" };
+
+async function gatherCandidatePool(business: Doc<"businesses">): Promise<Candidate[]> {
+  const lat = business.lat!;
+  const lng = business.lng!;
+  const pool: Candidate[] = [];
+  const seen = new Set<string>(business.placeId ? [business.placeId] : []);
+  const push = (places: Place[], hint: Candidate["hint"]) => {
+    for (const place of places) {
+      if (seen.has(place.placeId)) continue;
+      seen.add(place.placeId);
+      pool.push({ place, hint });
+    }
+  };
+
+  // Two nearby sweeps: the immediate block, then the wider area.
+  push(await searchNearbyPlaces({ lat, lng, radiusMeters: 1500, maxResultCount: 20 }), "nearby");
+  try {
+    push(await searchNearbyPlaces({ lat, lng, radiusMeters: 4000, maxResultCount: 20 }), "nearby");
+  } catch (err) {
+    console.error("Wide nearby search failed", err);
+  }
+
+  // Offices / coworking.
+  try {
+    push(
+      await searchTextPlaces(`coworking spaces, business parks and company offices near ${business.address ?? ""}`, {
+        lat,
+        lng,
+        radiusMeters: 5000,
+        maxResultCount: 20,
+      }),
+      "office",
+    );
+  } catch (err) {
+    console.error("Office search failed", err);
+  }
+
+  // Customer prospects: OpenAI names up to three ideal-customer searches,
+  // Places grounds each to real organizations.
+  try {
+    const q = await askJson(
+      "You write up to THREE Google Places text-search queries that find nearby organizations likely to BUY from a given business (its B2B customer prospects). Respond with strict JSON only.",
+      `Business:
+${businessProfileText(business)}
+
+Respond with JSON: {"queries": string[]} — up to 3 short, concrete Places searches near the business's area, each targeting a different customer segment, e.g. ["startups and software companies near Baner Pune", "manufacturing companies near Baner Pune", "colleges and universities near Pune"]. Ground them in what this business actually sells.`,
+    );
+    const queries: string[] = Array.isArray(q.queries)
+      ? q.queries.filter((s: unknown): s is string => typeof s === "string" && !!s.trim()).slice(0, 3)
+      : [];
+    for (const query of queries) {
+      try {
+        push(
+          await searchTextPlaces(query.trim(), { lat, lng, radiusMeters: 6000, maxResultCount: 20 }),
+          "customer",
+        );
+      } catch (err) {
+        console.error("Customer search failed", query, err);
+      }
+    }
+  } catch (err) {
+    console.error("Customer query generation failed", err);
+  }
+
+  return pool;
+}
+
+type Triaged = {
+  candidate: Candidate;
+  verdict: "competitor" | "complement" | "office" | "customer";
+  relevanceNote?: string;
+  score: number;
+};
+
+async function triageChunk(business: Doc<"businesses">, chunk: Candidate[]): Promise<Triaged[]> {
+  const listing = chunk
+    .map(({ place, hint }, i) => {
+      const parts = [
+        `${i + 1}. ${place.name}`,
+        `categories: ${place.types.slice(0, 6).join(", ") || "unknown"}`,
+        place.address ?? "",
+        place.rating !== undefined ? `rating ${place.rating}` : "",
+        hint === "office" ? "(from office search)" : hint === "customer" ? "(from customer-prospect search)" : "",
+      ];
+      return parts.filter(Boolean).join(" | ");
+    })
+    .join("\n");
+
+  const out = await askJson(
+    "You triage a list of real nearby organizations for a local business owner building an outreach pipeline. Judge each from its name, categories, address, and rating. Respond with strict JSON only.",
+    `My business:
+${businessProfileText(business)}
+
+Candidates:
+${listing}
+
+Respond with JSON: {"items": [{"index": <1-based number>, "verdict": "competitor" | "complement" | "office" | "customer" | "skip", "relevanceNote": string, "score": number}]} — one item per candidate.
+
+- competitor = sells substantially the same thing to the same customers; complement = adjacent offering with cross-promo potential; office = workplace worth pitching (perks, bulk orders, services); customer = would plausibly BUY what my business sells; skip = clearly irrelevant (residential, government infrastructure, unrelated).
+- Be inclusive: the owner wants a broad prospect list — prefer a non-skip verdict whenever a pitch is plausible.
+- "relevanceNote": ONE short concrete sentence on why this is worth pitching (or why skip).
+- "score": 0-100 how promising the pitch is.`,
+  );
+
+  const verdicts = new Set(["competitor", "complement", "office", "customer"]);
+  const items: any[] = Array.isArray(out.items) ? out.items : [];
+  const result: Triaged[] = [];
+  for (const item of items) {
+    const candidate = chunk[Number(item?.index) - 1];
+    if (!candidate || !verdicts.has(item.verdict)) continue;
+    const score = typeof item.score === "number" ? item.score : 0;
+    if (score < MIN_SCORE) continue;
+    result.push({
+      candidate,
+      verdict: item.verdict,
+      relevanceNote: typeof item.relevanceNote === "string" ? item.relevanceNote : undefined,
+      score,
+    });
+  }
+  return result;
+}
+
 export const sourceLeads = internalAction({
   args: { businessId: v.id("businesses"), rescan: v.boolean() },
   handler: async (ctx, { businessId, rescan }) => {
@@ -190,98 +324,62 @@ export const sourceLeads = internalAction({
       const deadline = Date.now() + SCAN_BUDGET_MS;
       await log(rescan ? "Rescanning your block for new leads…" : "Scanning your block…");
 
-      const nearby = await searchNearbyPlaces({
-        lat: business.lat,
-        lng: business.lng,
-        radiusMeters: RADIUS_METERS,
-        maxResultCount: 20,
-      });
+      let pool = await gatherCandidatePool(business);
+      // Rescan dedupe up front so triage tokens aren't spent on known places.
+      const known = new Set(await ctx.runQuery(internal.leads.listPlaceIds, { businessId }));
+      pool = pool.filter((c) => !known.has(c.place.placeId));
+      await log(`Found ${pool.length} nearby organizations — judging them…`);
 
-      let offices: Place[] = [];
-      try {
-        offices = await searchTextPlaces(
-          `coworking spaces and company offices near ${business.address ?? ""}`,
-          { lat: business.lat, lng: business.lng, radiusMeters: 2000, maxResultCount: 8 },
-        );
-      } catch (err) {
-        console.error("Office search failed", err);
-      }
-
-      // Customer branch: OpenAI names the ideal nearby customer profile
-      // from the business's own offerings, Google Places grounds it to
-      // real organizations — never invented names.
-      let customers: Place[] = [];
-      try {
-        const q = await askJson(
-          "You write ONE Google Places text-search query that finds nearby organizations likely to BUY from a given business (its B2B customer prospects). Respond with strict JSON only.",
-          `Business:
-${businessProfileText(business)}
-
-Respond with JSON: {"query": string} — a short, concrete Places search near the business's area, e.g. "startups and software companies near Baner Pune" for an IT services firm, or "corporate offices and event venues near <area>" for a caterer. Ground it in what this business actually sells.`,
-        );
-        if (typeof q.query === "string" && q.query.trim()) {
-          customers = await searchTextPlaces(q.query.trim(), {
-            lat: business.lat,
-            lng: business.lng,
-            radiusMeters: 3000,
-            maxResultCount: 8,
-          });
+      const inserted: { leadId: Id<"leads">; score: number; url?: string }[] = [];
+      let kept = 0;
+      for (let i = 0; i < pool.length; i += TRIAGE_CHUNK) {
+        const chunk = pool.slice(i, i + TRIAGE_CHUNK);
+        let triaged: Triaged[] = [];
+        try {
+          triaged = await triageChunk(business, chunk);
+        } catch (err) {
+          console.error("Triage chunk failed", err);
+          continue;
         }
-      } catch (err) {
-        console.error("Customer search failed", err);
+        for (const t of triaged) {
+          const leadId: Id<"leads"> | null = await ctx.runMutation(internal.leads.saveSourced, {
+            businessId,
+            type: t.verdict,
+            name: t.candidate.place.name,
+            address: t.candidate.place.address,
+            url: t.candidate.place.website,
+            placeId: t.candidate.place.placeId,
+            sourceUrl: t.candidate.place.website,
+            relevanceNote: t.relevanceNote,
+            score: t.score,
+          });
+          if (leadId) {
+            kept += 1;
+            inserted.push({ leadId, score: t.score, url: t.candidate.place.website });
+          }
+        }
       }
 
-      const seen = new Set<string>(business.placeId ? [business.placeId] : []);
-      const candidates: { place: Place; bucket: "place" | "office" | "customer" }[] = [];
-      for (const place of nearby) {
-        if (seen.has(place.placeId) || candidates.length >= NEARBY_CAP) continue;
-        seen.add(place.placeId);
-        candidates.push({ place, bucket: "place" });
-      }
-      let officeCount = 0;
-      for (const place of offices) {
-        if (seen.has(place.placeId) || officeCount >= OFFICE_CAP) continue;
-        seen.add(place.placeId);
-        candidates.push({ place, bucket: "office" });
-        officeCount += 1;
-      }
-      let customerCount = 0;
-      for (const place of customers) {
-        if (seen.has(place.placeId) || customerCount >= CUSTOMER_CAP) continue;
-        seen.add(place.placeId);
-        candidates.push({ place, bucket: "customer" });
-        customerCount += 1;
-      }
-
-      await log(`Found ${candidates.length} nearby places…`);
-      await log("Judging competitors vs. complements from what they actually sell…");
-
-      // Staggered fan-out: each candidate is scraped + judged on its own,
-      // so leads stream onto the dashboard as they're decided. 10s apart —
-      // each candidate can cost up to two Firecrawl calls, and the free
-      // tier caps requests per minute (saw 429s at ~1.5s spacing).
-      for (let i = 0; i < candidates.length; i++) {
-        const { place, bucket } = candidates[i];
-        await ctx.scheduler.runAfter(i * 10_000, internal.pipeline.enrichCandidate, {
-          businessId,
-          bucket,
-          name: place.name,
-          placeId: place.placeId,
-          address: place.address,
-          website: place.website,
-          types: place.types,
+      // Deep enrichment (site scrape → contact email → draft) for the
+      // top-scored leads with websites, spaced out and cut off at the
+      // scan budget.
+      const enrichable = inserted
+        .filter((l) => !!l.url)
+        .sort((a, b) => b.score - a.score);
+      const slots = Math.max(0, Math.floor((deadline - Date.now() - 20_000) / ENRICH_SPACING_MS));
+      const toEnrich = enrichable.slice(0, slots);
+      for (let i = 0; i < toEnrich.length; i++) {
+        await ctx.scheduler.runAfter(i * ENRICH_SPACING_MS, internal.pipeline.enrichLeadDetails, {
+          leadId: toEnrich[i].leadId,
           deadline,
         });
       }
 
-      // Events run their own search + up to 3 page scrapes — start them
-      // after the candidate fan-out has thinned out.
-      await ctx.scheduler.runAfter(
-        (candidates.length + 1) * 10_000,
-        internal.pipeline.sourceEvents,
-        { businessId, deadline },
-      );
+      await ctx.scheduler.runAfter(2_000, internal.pipeline.sourceEvents, { businessId, deadline });
       await ctx.runMutation(internal.businesses.markScanned, { businessId });
+      await log(
+        `Kept ${kept} leads. Finding contact emails for the top ${toEnrich.length} within the scan budget — the rest stay listed for later enrichment.`,
+      );
     } catch (err) {
       const message = errMessage(err);
       if (!rescan) {
@@ -292,105 +390,37 @@ Respond with JSON: {"query": string} — a short, concrete Places search near th
   },
 });
 
-// One candidate: scrape its site, judge rival/complement/office/noise from
-// actual content (category alone is weak signal), find a contact email,
-// store the lead, and queue a personalized draft.
-export const enrichCandidate = internalAction({
-  args: {
-    businessId: v.id("businesses"),
-    bucket: v.union(v.literal("place"), v.literal("office"), v.literal("customer")),
-    name: v.string(),
-    placeId: v.string(),
-    address: v.optional(v.string()),
-    website: v.optional(v.string()),
-    types: v.optional(v.array(v.string())),
-    deadline: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    const { businessId, bucket, name, placeId, address, website, types } = args;
-    if (args.deadline !== undefined && Date.now() > args.deadline) {
-      console.log(`Scan budget exhausted — dropping candidate ${name}`);
-      return;
-    }
-    const existing = await ctx.runQuery(internal.leads.byPlace, { businessId, placeId });
-    if (existing) return; // rescan dedupe
-    const business = await ctx.runQuery(internal.businesses.getById, { businessId });
-    if (!business) return;
-    const log = (message: string) =>
-      ctx.runMutation(internal.activity.log, { businessId, kind: "sourcing", message });
+// Deep second pass for one stored lead: scrape their site for a contact
+// email and concrete evidence, then queue the personalized draft.
+export const enrichLeadDetails = internalAction({
+  args: { leadId: v.id("leads"), deadline: v.optional(v.number()) },
+  handler: async (ctx, { leadId, deadline }) => {
+    if (deadline !== undefined && Date.now() > deadline) return;
+    const lead = await ctx.runQuery(internal.leads.get, { leadId });
+    if (!lead || !lead.url || lead.contactEmail || lead.status !== "sourced") return;
 
+    let content = "";
     try {
-      let content = "";
-      if (website) {
-        try {
-          content = (await scrapeMarkdown(ctx, website)).slice(0, 8000);
-        } catch (err) {
-          console.error("Candidate scrape failed", website, err);
-        }
-      }
-
-      const judged = await askJson(
-        "You judge whether a nearby business matters to a local business owner doing partnership/outreach mapping. Judge from what each actually sells, not just category labels — a bakery and a coffee shop are both 'food' but are usually complements, not rivals. Respond with strict JSON only.",
-        `My business:
-${businessProfileText(business)}
-
-Nearby candidate:
-Name: ${name}
-Address: ${address ?? "unknown"}
-Google categories: ${(types ?? []).join(", ") || "unknown"}
-${content ? `Their website content (markdown, truncated):\n${content}` : "No website content available — judge from name and categories only, conservatively."}
-${bucket === "office" ? "\nThis candidate came from an offices/coworking search: if it's a real office, coworking space, or company HQ, verdict should be \"office\" (they're a bulk-order / catering / perks pitch target), else \"skip\"." : ""}
-${bucket === "customer" ? '\nThis candidate came from a customer-prospect search: if they would plausibly BUY what my business sells, verdict should be "customer", else "skip".' : ""}
-
-Respond with JSON exactly matching:
-{"verdict": "competitor" | "complement" | "office" | "customer" | "skip", "relevanceNote": string, "evidence": string, "score": number}
-
-- "verdict": competitor = sells substantially the same thing to the same customers; complement = adjacent offering with cross-promo potential; office = workplace worth pitching; customer = an organization that would plausibly buy what my business sells; skip = irrelevant or too weak to pitch.
-- "relevanceNote": ONE short sentence on why this is worth pitching (a gap, an overlap, a concrete opportunity — e.g. "closed Sundays, you're open"). For skip, why not.
-- "evidence": a short concrete fact/quote from their content backing the note ("" if none).
-- "score": 0-100 how worth pitching this lead is.`,
-      );
-
-      const verdicts = ["competitor", "complement", "office", "customer"];
-      const verdict = verdicts.includes(judged.verdict) ? judged.verdict : "skip";
-      const score = typeof judged.score === "number" ? judged.score : 0;
-      if (verdict === "skip" || score < 35) {
-        await log(`Passed on ${name}${judged.relevanceNote ? ` — ${judged.relevanceNote}` : ""}`);
-        return;
-      }
-
-      let contactEmail = extractEmails(content)[0];
-      if (!contactEmail && website) {
-        try {
-          const origin = new URL(website).origin;
-          contactEmail = extractEmails(await scrapeMarkdown(ctx, `${origin}/contact`))[0];
-        } catch {
-          // no contact page — lead stays pitchable manually
-        }
-      }
-
-      const leadId: Id<"leads"> | null = await ctx.runMutation(internal.leads.saveSourced, {
-        businessId,
-        type: verdict,
-        name,
-        address,
-        url: website,
-        placeId,
-        sourceUrl: website,
-        contactEmail,
-        relevanceNote: typeof judged.relevanceNote === "string" ? judged.relevanceNote : undefined,
-        evidence: typeof judged.evidence === "string" && judged.evidence ? judged.evidence.slice(0, 400) : undefined,
-        score,
-      });
-      if (!leadId) return;
-
-      if (contactEmail) {
-        await ctx.scheduler.runAfter(0, internal.pipeline.generateDraft, { leadId });
-      } else {
-        await log(`No contact email found for ${name} — sourced without outreach draft`);
-      }
+      content = (await scrapeMarkdown(ctx, lead.url)).slice(0, 8000);
     } catch (err) {
-      await log(`Couldn't judge ${name}: ${errMessage(err)}`);
+      console.error("Lead site scrape failed", lead.url, err);
+    }
+
+    let contactEmail = extractEmails(content)[0];
+    if (!contactEmail && lead.url) {
+      try {
+        const origin = new URL(lead.url).origin;
+        contactEmail = extractEmails(await scrapeMarkdown(ctx, `${origin}/contact`))[0];
+      } catch {
+        // no contact page — lead stays listed without an email
+      }
+    }
+
+    const evidence = content ? content.replace(/\s+/g, " ").slice(0, 350) : undefined;
+    if (!contactEmail && !evidence) return;
+    await ctx.runMutation(internal.leads.saveEnrichment, { leadId, contactEmail, evidence });
+    if (contactEmail) {
+      await ctx.scheduler.runAfter(0, internal.pipeline.generateDraft, { leadId });
     }
   },
 });
@@ -411,7 +441,7 @@ export const sourceEvents = internalAction({
 
     try {
       const query = `upcoming local business networking or community events near ${business.address ?? business.name ?? ""} site:lu.ma OR site:eventbrite.com OR site:meetup.com`;
-      const results: any = await firecrawl.search(ctx, query, { limit: 8 } as any);
+      const results: any = await firecrawl.search(ctx, query, { limit: 10 } as any);
       const entries: any[] =
         results?.web ?? results?.results ?? results?.data?.web ?? (Array.isArray(results?.data) ? results.data : []);
       if (!entries || entries.length === 0) {
@@ -431,7 +461,7 @@ Search results for nearby events:
 ${listing}
 
 Respond with JSON: {"picks": [{"index": <1-based number>, "name": string, "why": string}]}
-Pick at most ${EVENT_PICKS}. "why" is one short sentence on the concrete opportunity (e.g. "200-person tech meetup next week — catering pitch"). Return {"picks": []} if none are actually local and relevant.`,
+Pick at most ${EVENT_PICKS}. "why" is one short sentence on the concrete opportunity. Return {"picks": []} if none are actually local and relevant.`,
       );
 
       const picks: { index: number; name?: string; why?: string }[] = Array.isArray(picked.picks)
@@ -476,8 +506,8 @@ Pick at most ${EVENT_PICKS}. "why" is one short sentence on the concrete opportu
 
 // -------------------------------------------------------------- outreach
 
-// One personalized draft per lead, referencing something real. Waits for
-// approval unless the business has auto-send on.
+// One personalized, properly formatted draft per lead. Waits for approval
+// unless the business has auto-send on.
 export const generateDraft = internalAction({
   args: { leadId: v.id("leads") },
   handler: async (ctx, { leadId }) => {
@@ -495,7 +525,7 @@ export const generateDraft = internalAction({
 
     try {
       const draft = await askJson(
-        "You write short, professional first-touch emails from one local business owner to a nearby business, office, or event organizer. Warm, specific, zero spam clichés, no placeholder brackets. Plain text body. Respond with strict JSON only.",
+        "You write short, professional B2B outreach emails from one local business owner to a nearby business, office, event organizer, or prospective customer. Warm, specific, zero spam clichés, no placeholder brackets, plain text. Respond with strict JSON only.",
         `Sender (writing as the owner):
 ${businessProfileText(business)}
 
@@ -506,8 +536,17 @@ Why we're reaching out (real, from research): ${lead.relevanceNote ?? "nearby bu
 Evidence from their site: ${lead.evidence ?? "n/a"}
 
 Write the email. Respond with JSON: {"subject": string, "body": string}
-- subject: under 60 characters, concrete, no clickbait.
-- body: 90-140 words. Open with the specific real detail from the research (never "I hope this finds you well"). Propose ONE concrete idea that fits a ${lead.type} (e.g. cross-promo, bundle, referral swap, event booth/catering, office perk or bulk order — or, for a customer prospect, a specific first offer of your product/service tailored to what they do). End with a low-friction ask (a short reply or 15-minute chat). Sign off with "${business.name ?? "the owner"}".`,
+- subject: under 55 characters, concrete, no clickbait, never ALL CAPS.
+- body: 90-140 words, plain text, formatted exactly like a real email:
+  Line 1: "Hi ${lead.name} team," (shorten the name naturally if it's long)
+  Blank line, then paragraph 1 (1-2 sentences): the specific real detail from the research — why them, why now. Never "I hope this finds you well".
+  Blank line, then paragraph 2 (1-2 sentences): who we are in half a sentence, plus ONE concrete proposal that fits a ${lead.type} (cross-promo, bundle, referral swap, event booth/catering, office perk or bulk order — or, for a customer prospect, a specific first offer of your product/service tailored to what they do).
+  Optionally 2-3 short "- " bullet lines if they genuinely sharpen the proposal.
+  Blank line, then a low-friction closing ask (a short reply or a 15-minute chat).
+  Blank line, then exactly:
+  "Best,
+${business.name ?? "the owner"}
+${business.url}"`,
       );
       if (typeof draft.subject !== "string" || typeof draft.body !== "string") {
         throw new Error("Draft generation returned an unexpected shape");
@@ -535,9 +574,9 @@ Write the email. Respond with JSON: {"subject": string, "body": string}
   },
 });
 
-// Send the approved draft from the app's AgentMail inbox. REST (not the
-// component's async queue) because we need message_id/thread_id back
-// synchronously to track the thread for inbound replies.
+// Send the approved draft from the app's AgentMail inbox — text plus a
+// clean HTML rendering. REST (not the component's async queue) because we
+// need message_id/thread_id back synchronously to track replies.
 export const sendOutreach = internalAction({
   args: { outreachId: v.id("outreach") },
   handler: async (ctx, { outreachId }) => {
@@ -560,6 +599,7 @@ export const sendOutreach = internalAction({
             to: [lead.contactEmail],
             subject: outreach.subject,
             text: outreach.draftText,
+            html: textToHtml(outreach.draftText),
           }),
         },
       );
@@ -603,7 +643,7 @@ export const sendFollowUp = internalAction({
       businessId: outreach.businessId,
     });
 
-    let text = `Hi — just floating this back to the top of your inbox in case it got buried. Still happy to chat whenever suits. If it's not a fit, no worries at all.\n\n${business?.name ?? ""}`.trim();
+    let text = `Hi — just floating this back to the top of your inbox in case it got buried. Still happy to chat whenever suits. If it's not a fit, no worries at all.\n\nBest,\n${business?.name ?? ""}`.trim();
     try {
       const generated = await askJson(
         "You write a 2-3 sentence friendly follow-up to an unanswered business outreach email. Not pushy, no guilt-tripping. Plain text. Respond with strict JSON only.",
@@ -611,7 +651,7 @@ export const sendFollowUp = internalAction({
 Subject: ${outreach.subject ?? ""}
 ${outreach.draftText ?? ""}
 
-Respond with JSON: {"body": string} — 2-3 sentences, reference the original idea in a few words, end with an easy out. Sign off with "${business?.name ?? "the owner"}".`,
+Respond with JSON: {"body": string} — 2-3 sentences, reference the original idea in a few words, end with an easy out. Sign off with "Best,\\n${business?.name ?? "the owner"}".`,
       );
       if (typeof generated.body === "string" && generated.body.trim()) {
         text = generated.body.trim();
@@ -626,7 +666,7 @@ Respond with JSON: {"body": string} — 2-3 sentences, reference the original id
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify({ text, html: textToHtml(text) }),
         },
       );
       await ctx.runMutation(internal.outreach.markFollowedUp, { outreachId, text });
@@ -639,7 +679,41 @@ Respond with JSON: {"body": string} — 2-3 sentences, reference the original id
   },
 });
 
-// Inbound reply → interested / not interested / needs info.
+// The owner's own in-app reply, relayed through the agent inbox into the
+// same thread. Its message row also pre-empts the delayed auto-reply.
+export const sendManualReply = internalAction({
+  args: { outreachId: v.id("outreach"), text: v.string() },
+  handler: async (ctx, { outreachId, text }) => {
+    const outreach = await ctx.runQuery(internal.outreach.get, { outreachId });
+    if (!outreach || outreach.sentAt === undefined || !outreach.inboxId) return;
+    const thread = await ctx.runQuery(internal.outreach.listThreadMessages, { outreachId });
+    const lastInbound = [...thread]
+      .reverse()
+      .find((m) => m.direction === "inbound" && m.agentmailMessageId);
+    const replyTo = lastInbound?.agentmailMessageId ?? outreach.agentmailMessageId;
+    if (!replyTo) return;
+
+    try {
+      await agentmailApiFetch(
+        `/inboxes/${encodeURIComponent(outreach.inboxId)}/messages/${encodeURIComponent(replyTo)}/reply`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, html: textToHtml(text) }),
+        },
+      );
+      await ctx.runMutation(internal.outreach.recordManualReply, { outreachId, text });
+    } catch (err) {
+      await ctx.runMutation(internal.outreach.markSendFailed, {
+        outreachId,
+        error: `Your reply failed to send: ${errMessage(err)}`,
+      });
+    }
+  },
+});
+
+// Inbound reply → classify, notify the owner immediately, and give them a
+// one-hour window to answer themselves before the agent replies for them.
 export const classifyReply = internalAction({
   args: {
     outreachId: v.id("outreach"),
@@ -678,14 +752,65 @@ ${text.slice(0, 4000)}
       classification,
     });
 
-    // The agent answers the reply itself (unless auto-reply is off), so the
-    // conversation keeps moving and the whole thread stays visible in-app.
     const business = await ctx.runQuery(internal.businesses.getById, {
       businessId: outreach.businessId,
     });
     const lead = await ctx.runQuery(internal.leads.get, { leadId: outreach.leadId });
+    if (!business) return;
+    const label = CLASSIFICATION_TEXT[classification];
+
+    // Notify the owner at their signup address, right away.
+    try {
+      const owner = await ctx.runQuery(internal.users.getById, { userId: business.userId });
+      if (owner?.email && outreach.inboxId) {
+        const siteUrl = process.env.CONVEX_SITE_URL ?? "";
+        const notice = `${lead?.name ?? "A lead"} replied to your ${business.name ?? ""} outreach — classified: ${label}.
+
+Their reply:
+"${text.slice(0, 500)}"
+
+Open Block to read the thread and respond:
+${siteUrl}
+
+If you don't respond within 1 hour, your agent will reply on your behalf automatically${business.autoReply === false ? " (currently turned OFF in Settings)" : ""}.`;
+        await agentmailApiFetch(`/inboxes/${encodeURIComponent(outreach.inboxId)}/messages/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: [owner.email],
+            subject: `${lead?.name ?? "A lead"} replied — ${label}`,
+            text: notice,
+            html: textToHtml(notice),
+          }),
+        });
+      }
+    } catch (err) {
+      console.error("Owner notification failed", err);
+    }
+
+    // Grace window, then the agent answers — unless the owner already did.
+    if (business.autoReply !== false && outreach.inboxId) {
+      await ctx.scheduler.runAfter(AUTO_REPLY_DELAY_MS, internal.pipeline.sendAutoReply, {
+        outreachId,
+        messageRowId,
+      });
+    }
+  },
+});
+
+// Fires an hour after an inbound reply. Skips itself if that reply is no
+// longer the last message in the thread (the owner replied, or a newer
+// inbound arrived with its own pending auto-reply).
+export const sendAutoReply = internalAction({
+  args: { outreachId: v.id("outreach"), messageRowId: v.id("messages") },
+  handler: async (ctx, { outreachId, messageRowId }) => {
+    const outreach = await ctx.runQuery(internal.outreach.get, { outreachId });
+    const business = outreach
+      ? await ctx.runQuery(internal.businesses.getById, { businessId: outreach.businessId })
+      : null;
     const messageRow = await ctx.runQuery(internal.outreach.getMessageRow, { messageRowId });
     if (
+      !outreach ||
       !business ||
       business.autoReply === false ||
       !outreach.inboxId ||
@@ -693,8 +818,13 @@ ${text.slice(0, 4000)}
     ) {
       return;
     }
+    const thread = await ctx.runQuery(internal.outreach.listThreadMessages, { outreachId });
+    const last = thread[thread.length - 1];
+    if (!last || last._id !== messageRowId) return; // someone already answered
+
+    const lead = await ctx.runQuery(internal.leads.get, { leadId: outreach.leadId });
+    const classification = outreach.replyClassification ?? "needs_info";
     try {
-      const thread = await ctx.runQuery(internal.outreach.listThreadMessages, { outreachId });
       const transcript = thread
         .map(
           (m) =>
@@ -716,25 +846,23 @@ Thread so far (oldest first):
 ${transcript}
 
 Their latest reply:
-${text.slice(0, 3000)}
+${messageRow.text.slice(0, 3000)}
 
 ${guidance}
 
-Respond with JSON: {"body": string} — the reply email body, signed off with "${business.name ?? "the owner"}".`,
+Respond with JSON: {"body": string} — the reply email body, signed off with "Best,\\n${business.name ?? "the owner"}".`,
       );
       if (typeof generated.body !== "string" || !generated.body.trim()) return;
+      const body = generated.body.trim();
       await agentmailApiFetch(
         `/inboxes/${encodeURIComponent(outreach.inboxId)}/messages/${encodeURIComponent(messageRow.agentmailMessageId)}/reply`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: generated.body.trim() }),
+          body: JSON.stringify({ text: body, html: textToHtml(body) }),
         },
       );
-      await ctx.runMutation(internal.outreach.recordAutoReply, {
-        outreachId,
-        text: generated.body.trim(),
-      });
+      await ctx.runMutation(internal.outreach.recordAutoReply, { outreachId, text: body });
     } catch (err) {
       console.error("Auto-reply failed", err);
     }

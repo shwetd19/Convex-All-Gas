@@ -63,6 +63,29 @@ export const followUpNow = mutation({
   },
 });
 
+// Owner replies in-thread from the app — the "I'll handle this one
+// myself" path that pre-empts the delayed auto-reply.
+export const replyInThread = mutation({
+  args: { leadId: v.id("leads"), text: v.string() },
+  handler: async (ctx, { leadId, text }) => {
+    const lead = await ctx.db.get(leadId);
+    if (!lead) throw new Error("Lead not found");
+    await requireOwnedBusiness(ctx, lead.businessId);
+    const outreach = await ctx.db
+      .query("outreach")
+      .withIndex("by_leadId", (q) => q.eq("leadId", leadId))
+      .first();
+    if (!outreach || outreach.sentAt === undefined) throw new Error("Nothing sent yet");
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error("Write a reply first");
+    if (trimmed.length > 5000) throw new Error("Reply is too long");
+    await ctx.scheduler.runAfter(0, internal.pipeline.sendManualReply, {
+      outreachId: outreach._id,
+      text: trimmed,
+    });
+  },
+});
+
 // ---- internal (pipeline / crons / webhook) ----
 
 export const get = internalQuery({
@@ -82,6 +105,30 @@ export const listThreadMessages = internalQuery({
       .query("messages")
       .withIndex("by_outreachId", (q) => q.eq("outreachId", outreachId))
       .take(50),
+});
+
+// The owner's own in-app reply, sent through the agent inbox.
+export const recordManualReply = internalMutation({
+  args: { outreachId: v.id("outreach"), text: v.string() },
+  handler: async (ctx, { outreachId, text }) => {
+    const outreach = await ctx.db.get(outreachId);
+    if (!outreach) return;
+    const lead = await ctx.db.get(outreach.leadId);
+    await ctx.db.insert("messages", {
+      outreachId,
+      businessId: outreach.businessId,
+      direction: "outbound",
+      kind: "manual_reply",
+      text,
+      sentAt: Date.now(),
+    });
+    await ctx.db.insert("activity", {
+      businessId: outreach.businessId,
+      leadId: outreach.leadId,
+      kind: "reply",
+      message: `You replied to ${lead?.name ?? "lead"} in-thread`,
+    });
+  },
 });
 
 // The agent's own answer to an inbound reply (auto-reply mode).

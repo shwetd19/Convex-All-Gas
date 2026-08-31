@@ -52,6 +52,7 @@ const KIND_LABEL: Record<MessageDoc["kind"], string> = {
   follow_up: "Follow-up",
   reply: "Reply",
   auto_reply: "Auto-reply",
+  manual_reply: "Your reply",
 };
 
 function formatWhen(ms: number): string {
@@ -752,9 +753,12 @@ function LeadModal({
   const { lead } = row;
   const data = useQuery(api.outreach.getForLead, { leadId: lead._id });
   const followUpNow = useMutation(api.outreach.followUpNow);
+  const replyInThread = useMutation(api.outreach.replyInThread);
   const markWon = useMutation(api.leads.markWon);
   const skip = useMutation(api.leads.skip);
   const [busy, setBusy] = useState(false);
+  const [replyText, setReplyText] = useState("");
+  const [replyBusy, setReplyBusy] = useState(false);
 
   const outreach = data?.outreach ?? null;
   const messages = data?.messages ?? [];
@@ -821,6 +825,40 @@ function LeadModal({
 
               {messages.length > 0 && (
                 <ThreadView messages={messages} businessName={businessName} leadName={lead.name} />
+              )}
+
+              {outreach?.sentAt !== undefined && (
+                <div className="reply-composer">
+                  <div className="section-label">Reply as {businessName}</div>
+                  <textarea
+                    className="text-input draft-textarea"
+                    rows={3}
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    placeholder={`Write your reply to ${lead.name}…`}
+                  />
+                  <div className="button-row">
+                    <button
+                      className="btn btn-primary btn-sm"
+                      disabled={replyBusy || !replyText.trim()}
+                      onClick={async () => {
+                        setReplyBusy(true);
+                        try {
+                          await replyInThread({ leadId: lead._id, text: replyText });
+                          setReplyText("");
+                        } finally {
+                          setReplyBusy(false);
+                        }
+                      }}
+                    >
+                      {replyBusy ? "Sending…" : "Send reply"}
+                    </button>
+                    <span className="muted-note">
+                      Sends from the agent inbox. If you don't answer a new reply within an
+                      hour, the agent replies for you.
+                    </span>
+                  </div>
+                </div>
               )}
 
               {canFollowUp && outreach?.nextActionAt !== undefined && (
