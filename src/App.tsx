@@ -1012,6 +1012,40 @@ function ActivityFeed({ businessId }: { businessId: Id<"businesses"> }) {
   );
 }
 
+function SettingRow({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="setting-row">
+      <div className="setting-info">
+        <div className="setting-title">{title}</div>
+        {description && <div className="setting-desc">{description}</div>}
+      </div>
+      <div className="setting-control">{children}</div>
+    </div>
+  );
+}
+
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      className={`switch ${checked ? "switch-on" : ""}`}
+      onClick={() => onChange(!checked)}
+    >
+      <span className="switch-knob" />
+    </button>
+  );
+}
+
 function SettingsPanel({ business }: { business: BusinessDoc }) {
   const updateSettings = useMutation(api.businesses.updateSettings);
   const rescanNow = useMutation(api.businesses.rescanNow);
@@ -1021,12 +1055,15 @@ function SettingsPanel({ business }: { business: BusinessDoc }) {
   const businessId = business._id;
 
   return (
-    <div className="settings-panel">
-      <div className="settings-row">
-        <label className="field-label">
-          Approval mode
+    <div className="settings-stack">
+      <div className="settings-card">
+        <div className="settings-card-head">Outreach</div>
+        <SettingRow
+          title="Approval mode"
+          description="Whether drafted emails wait for your review or send as soon as they're ready."
+        >
           <select
-            className="text-input"
+            className="text-input setting-select"
             value={business.approvalMode}
             onChange={(e) =>
               void updateSettings({
@@ -1038,44 +1075,72 @@ function SettingsPanel({ business }: { business: BusinessDoc }) {
             <option value="approve_each">I approve each email</option>
             <option value="auto_send">Auto-send drafts</option>
           </select>
-        </label>
-        <label className="field-label">
-          Follow-up delay (days)
-          <input
-            className="text-input"
-            type="number"
-            min={1}
-            max={30}
-            value={business.followUpDelayDays}
-            onChange={(e) =>
-              void updateSettings({ businessId, followUpDelayDays: Number(e.target.value) })
-            }
-          />
-        </label>
-        <label className="check-label">
-          <input
-            type="checkbox"
-            checked={business.weeklyRescan}
-            onChange={(e) => void updateSettings({ businessId, weeklyRescan: e.target.checked })}
-          />
-          Weekly automatic rescan
-        </label>
-        <label className="check-label">
-          <input
-            type="checkbox"
-            checked={business.autoReply === true}
-            onChange={(e) => void updateSettings({ businessId, autoReply: e.target.checked })}
-          />
-          Auto-reply for me: if I don't answer a reply within 1 hour, the agent responds on my
-          behalf (off by default)
-        </label>
+        </SettingRow>
+        <SettingRow
+          title="Follow-up delay"
+          description="After this many quiet days the agent sends its one follow-up; continued silence marks the lead cold."
+        >
+          <div className="setting-inline">
+            <input
+              className="text-input setting-number"
+              type="number"
+              min={1}
+              max={30}
+              value={business.followUpDelayDays}
+              onChange={(e) =>
+                void updateSettings({ businessId, followUpDelayDays: Number(e.target.value) })
+              }
+            />
+            <span className="setting-suffix">days</span>
+          </div>
+        </SettingRow>
       </div>
-      <div className="settings-footer">
-        <span className="muted-note">
-          Agent inbox: {inbox ? `${inbox.email} ✓` : "not set up yet"}
-          {business.lastScanAt ? ` · last scan ${formatWhen(business.lastScanAt)}` : ""}
-        </span>
-        <div className="button-row">
+
+      <div className="settings-card">
+        <div className="settings-card-head">Autonomy</div>
+        <SettingRow
+          title="Auto-reply on your behalf"
+          description="If you don't answer an inbound reply within 1 hour, the agent responds for you — proposes a next step, answers from your profile, or closes politely. Off by default; you choose how much autonomy to hand over."
+        >
+          <Toggle
+            checked={business.autoReply === true}
+            onChange={(v) => void updateSettings({ businessId, autoReply: v })}
+          />
+        </SettingRow>
+        <SettingRow
+          title="Weekly automatic rescan"
+          description="Every Monday the agent re-scans the block and surfaces only genuinely new leads."
+        >
+          <Toggle
+            checked={business.weeklyRescan}
+            onChange={(v) => void updateSettings({ businessId, weeklyRescan: v })}
+          />
+        </SettingRow>
+      </div>
+
+      <div className="settings-card">
+        <div className="settings-card-head">Agent inbox</div>
+        <SettingRow
+          title="Outbound address"
+          description="All outreach and replies flow through this dedicated inbox — never your personal email."
+        >
+          {inbox ? (
+            <span className="inbox-pill">
+              <span className="inbox-dot" />
+              {inbox.email}
+            </span>
+          ) : (
+            <span className="muted-note">not set up yet</span>
+          )}
+        </SettingRow>
+        <SettingRow
+          title="Block scan"
+          description={
+            business.lastScanAt
+              ? `Last scan ${formatWhen(business.lastScanAt)}. Rescans dedupe — only new places become leads.`
+              : "No scan completed yet."
+          }
+        >
           <button
             className="btn btn-secondary btn-sm"
             disabled={rescanBusy || business.status !== "ready"}
@@ -1088,10 +1153,19 @@ function SettingsPanel({ business }: { business: BusinessDoc }) {
               }
             }}
           >
-            Rescan the block now
+            {rescanBusy ? "Starting…" : "Rescan the block now"}
           </button>
+        </SettingRow>
+      </div>
+
+      <div className="settings-card settings-card-danger">
+        <div className="settings-card-head settings-card-head-danger">Danger zone</div>
+        <SettingRow
+          title="Remove this business"
+          description="Deletes the business with all its leads, threads, and activity. This can't be undone."
+        >
           <button
-            className="btn btn-danger-ghost btn-sm"
+            className="btn btn-danger-outline btn-sm"
             onClick={() => {
               if (window.confirm(`Remove ${business.name ?? business.url} and all its leads?`)) {
                 void remove({ businessId });
@@ -1100,7 +1174,7 @@ function SettingsPanel({ business }: { business: BusinessDoc }) {
           >
             Remove business
           </button>
-        </div>
+        </SettingRow>
       </div>
     </div>
   );
