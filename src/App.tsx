@@ -83,6 +83,73 @@ function useNowTick(intervalMs = 30_000): number {
 
 // ---------------------------------------------------------------- sidebar
 
+function NavIcon({ name }: { name: string }) {
+  const paths: Record<string, ReactNode> = {
+    profile: (
+      <>
+        <path d="M3 21h18" />
+        <path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16" />
+        <path d="M9 8h1M14 8h1M9 12h1M14 12h1M10 21v-4h4v4" />
+      </>
+    ),
+    customer: (
+      <>
+        <path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+      </>
+    ),
+    competitor: (
+      <>
+        <circle cx="12" cy="12" r="10" />
+        <circle cx="12" cy="12" r="6" />
+        <circle cx="12" cy="12" r="2" />
+      </>
+    ),
+    complement: (
+      <>
+        <path d="M12 2 2 7l10 5 10-5-10-5z" />
+        <path d="M2 17l10 5 10-5" />
+        <path d="M2 12l10 5 10-5" />
+      </>
+    ),
+    office: (
+      <>
+        <rect x="2" y="7" width="20" height="14" rx="2" />
+        <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+      </>
+    ),
+    event: (
+      <>
+        <rect x="3" y="4" width="18" height="18" rx="2" />
+        <path d="M16 2v4M8 2v4M3 10h18" />
+      </>
+    ),
+    activity: <path d="M22 12h-4l-3 9L9 3l-3 9H2" />,
+    settings: (
+      <>
+        <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3" />
+        <path d="M1 14h6M9 8h6M17 16h6" />
+      </>
+    ),
+  };
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="nav-icon"
+      aria-hidden="true"
+    >
+      {paths[name]}
+    </svg>
+  );
+}
+
 function Sidebar({
   businesses,
   selectedId,
@@ -104,13 +171,16 @@ function Sidebar({
   const { signOut } = useAuthActions();
   const countFor = (t: LeadDoc["type"]) => rows?.filter((r) => r.lead.type === t).length ?? 0;
 
-  const item = (key: Page, label: string, count?: number) => (
+  const item = (key: Page, label: string, icon: string, count?: number) => (
     <button
       key={key}
       className={`side-item ${page === key ? "side-item-active" : ""}`}
       onClick={() => setPage(key)}
     >
-      <span>{label}</span>
+      <span className="side-item-left">
+        <NavIcon name={icon} />
+        <span>{label}</span>
+      </span>
       {count !== undefined && <span className="side-count">{count}</span>}
     </button>
   );
@@ -123,7 +193,8 @@ function Sidebar({
       </div>
 
       {businesses.length > 0 && (
-        <>
+        <div className="side-biz">
+          <div className="side-section-label side-biz-label">Business</div>
           <select
             className="side-select"
             value={selectedId ?? businesses[0]._id}
@@ -138,21 +209,26 @@ function Sidebar({
           <button className="btn btn-secondary btn-sm side-add" onClick={onAdd}>
             + Add business
           </button>
-        </>
+        </div>
       )}
 
       <nav className="side-nav">
         <div className="side-section-label">Workspace</div>
-        {item("profile", "Business profile")}
+        {item("profile", "Business profile", "profile")}
         <div className="side-section-label">Leads</div>
-        {LEAD_NAV.map((t) => item(t.key, t.label, countFor(t.key)))}
+        {LEAD_NAV.map((t) => item(t.key, t.label, t.key, countFor(t.key)))}
         <div className="side-section-label">Agent</div>
-        {item("activity", "Activity")}
-        {item("settings", "Settings")}
+        {item("activity", "Activity", "activity")}
+        {item("settings", "Settings", "settings")}
       </nav>
 
       <div className="side-footer">
-        {me && <span className="account-email">{me.email}</span>}
+        {me && (
+          <div className="side-user">
+            <span className="avatar">{(me.email ?? "?").charAt(0).toUpperCase()}</span>
+            <span className="account-email">{me.email}</span>
+          </div>
+        )}
         <button className="btn btn-ghost btn-sm" onClick={() => void signOut()}>
           Sign out
         </button>
@@ -383,6 +459,15 @@ function ProfilePage({ business }: { business: BusinessDoc }) {
                 placeholder="e.g. coffee shop, IT services"
               />
             </label>
+            <label className="field-label">
+              Business domain / industry
+              <input
+                className="text-input"
+                value={form.domain}
+                onChange={set("domain")}
+                placeholder="e.g. AI product engineering"
+              />
+            </label>
           </div>
           <div className="profile-meta">
             <a href={business.url} target="_blank" rel="noreferrer">
@@ -393,32 +478,35 @@ function ProfilePage({ business }: { business: BusinessDoc }) {
         </div>
 
         <div className="profile-card">
-          <div className="section-label">Details</div>
+          <div className="section-label">Company details</div>
+          <div className="profile-row">
+            <label className="field-label">
+              Team size
+              <input
+                className="text-input"
+                value={form.teamSize}
+                onChange={set("teamSize")}
+                placeholder="e.g. 25-50"
+              />
+            </label>
+            <label className="field-label">
+              Founded
+              <input
+                className="text-input"
+                value={form.foundedYear}
+                onChange={set("foundedYear")}
+                placeholder="e.g. 2019"
+              />
+            </label>
+          </div>
           <label className="field-label">
-            Business domain / industry
-            <input
-              className="text-input"
-              value={form.domain}
-              onChange={set("domain")}
-              placeholder="e.g. AI product engineering, specialty food"
-            />
-          </label>
-          <label className="field-label">
-            Team size
-            <input
-              className="text-input"
-              value={form.teamSize}
-              onChange={set("teamSize")}
-              placeholder="e.g. 25-50"
-            />
-          </label>
-          <label className="field-label">
-            Founded
-            <input
-              className="text-input"
-              value={form.foundedYear}
-              onChange={set("foundedYear")}
-              placeholder="e.g. 2019"
+            Notes for the agent
+            <textarea
+              className="text-input profile-textarea"
+              rows={4}
+              value={form.notes}
+              onChange={set("notes")}
+              placeholder="Anything the agent should know or mention when pitching"
             />
           </label>
         </div>
@@ -429,26 +517,16 @@ function ProfilePage({ business }: { business: BusinessDoc }) {
             Description
             <textarea
               className="text-input profile-textarea"
-              rows={5}
+              rows={7}
               value={form.description}
               onChange={set("description")}
-            />
-          </label>
-          <label className="field-label">
-            Notes for the agent
-            <textarea
-              className="text-input profile-textarea"
-              rows={3}
-              value={form.notes}
-              onChange={set("notes")}
-              placeholder="Anything the agent should know or mention when pitching"
             />
           </label>
         </div>
 
         {business.offerings && business.offerings.length > 0 && (
           <div className="profile-card profile-card-full">
-            <div className="section-label">Offerings (from your site)</div>
+            <div className="section-label">Offerings — read from your site</div>
             <div className="chip-row">
               {business.offerings.map((o) => (
                 <span key={o} className="offering-chip">
@@ -458,18 +536,18 @@ function ProfilePage({ business }: { business: BusinessDoc }) {
             </div>
           </div>
         )}
+      </div>
 
-        <div className="profile-card profile-card-full">
-          <div className="button-row">
-            <button className="btn btn-primary" disabled={busy} onClick={() => void save()}>
-              {busy ? "Saving…" : "Save profile"}
-            </button>
-            {saved && <span className="saved-note">Saved ✓</span>}
-            <span className="profile-meta">
-              {business.scrapedAt ? `Site read ${formatWhen(business.scrapedAt)}` : ""}
-              {business.lastScanAt ? ` · last scan ${formatWhen(business.lastScanAt)}` : ""}
-            </span>
-          </div>
+      <div className="profile-save">
+        <span className="profile-meta">
+          {business.scrapedAt ? `Site read ${formatWhen(business.scrapedAt)}` : ""}
+          {business.lastScanAt ? ` · last scan ${formatWhen(business.lastScanAt)}` : ""}
+        </span>
+        <div className="button-row">
+          {saved && <span className="saved-note">Saved ✓</span>}
+          <button className="btn btn-primary" disabled={busy} onClick={() => void save()}>
+            {busy ? "Saving…" : "Save profile"}
+          </button>
         </div>
       </div>
     </>
