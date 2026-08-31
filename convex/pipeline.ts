@@ -23,6 +23,11 @@ const NEARBY_CAP = 10;
 const OFFICE_CAP = 4;
 const EVENT_PICKS = 3;
 
+// Per-company scan budget: everything one scan schedules must run within
+// this window — after it passes, remaining candidates are dropped. Keeps
+// Google Places / Firecrawl usage strictly bounded per business.
+const SCAN_BUDGET_MS = 5 * 60 * 1000;
+
 // Lazy construction: the OpenAI client throws in its constructor if the key
 // is missing, and Convex bundles every module at push time — build it inside
 // handlers so a missing key only fails the function that needs it.
@@ -173,6 +178,7 @@ export const sourceLeads = internalAction({
       if (business.lat === undefined || business.lng === undefined) {
         throw new Error("Business has no resolved location — restart setup");
       }
+      const deadline = Date.now() + SCAN_BUDGET_MS;
       await log(rescan ? "Rescanning your block for new leads…" : "Scanning your block…");
 
       const nearby = await searchNearbyPlaces({
@@ -224,6 +230,7 @@ export const sourceLeads = internalAction({
           address: place.address,
           website: place.website,
           types: place.types,
+          deadline,
         });
       }
 
@@ -232,7 +239,7 @@ export const sourceLeads = internalAction({
       await ctx.scheduler.runAfter(
         (candidates.length + 1) * 10_000,
         internal.pipeline.sourceEvents,
-        { businessId },
+        { businessId, deadline },
       );
       await ctx.runMutation(internal.businesses.markScanned, { businessId });
     } catch (err) {
@@ -257,9 +264,14 @@ export const enrichCandidate = internalAction({
     address: v.optional(v.string()),
     website: v.optional(v.string()),
     types: v.optional(v.array(v.string())),
+    deadline: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const { businessId, bucket, name, placeId, address, website, types } = args;
+    if (args.deadline !== undefined && Date.now() > args.deadline) {
+      console.log(`Scan budget exhausted — dropping candidate ${name}`);
+      return;
+    }
     const existing = await ctx.runQuery(internal.leads.byPlace, { businessId, placeId });
     if (existing) return; // rescan dedupe
     const business = await ctx.runQuery(internal.businesses.getById, { businessId });
@@ -345,8 +357,12 @@ Respond with JSON exactly matching:
 // Events branch: Firecrawl web search grounds real local events (Luma /
 // Eventbrite / Meetup pages), OpenAI scores fit, Convex stores the leads.
 export const sourceEvents = internalAction({
-  args: { businessId: v.id("businesses") },
-  handler: async (ctx, { businessId }) => {
+  args: { businessId: v.id("businesses"), deadline: v.optional(v.number()) },
+  handler: async (ctx, { businessId, deadline }) => {
+    if (deadline !== undefined && Date.now() > deadline) {
+      console.log("Scan budget exhausted — skipping event search");
+      return;
+    }
     const business = await ctx.runQuery(internal.businesses.getById, { businessId });
     if (!business) return;
     const log = (message: string) =>
@@ -620,5 +636,66 @@ ${text.slice(0, 4000)}
       messageRowId,
       classification,
     });
+
+    // The agent answers the reply itself (unless auto-reply is off), so the
+    // conversation keeps moving and the whole thread stays visible in-app.
+    const business = await ctx.runQuery(internal.businesses.getById, {
+      businessId: outreach.businessId,
+    });
+    const lead = await ctx.runQuery(internal.leads.get, { leadId: outreach.leadId });
+    const messageRow = await ctx.runQuery(internal.outreach.getMessageRow, { messageRowId });
+    if (
+      !business ||
+      business.autoReply === false ||
+      !outreach.inboxId ||
+      !messageRow?.agentmailMessageId
+    ) {
+      return;
+    }
+    try {
+      const thread = await ctx.runQuery(internal.outreach.listThreadMessages, { outreachId });
+      const transcript = thread
+        .map(
+          (m) =>
+            `${m.direction === "outbound" ? (business.name ?? "Us") : (lead?.name ?? "Them")}: ${m.text.slice(0, 1500)}`,
+        )
+        .join("\n---\n");
+      const guidance =
+        classification === "interested"
+          ? "They're interested: thank them, propose ONE concrete next step (a quick call or meeting this week), and ask what time suits them."
+          : classification === "needs_info"
+            ? "They asked for more information: answer their questions using ONLY facts from the business profile and thread. For anything you don't know, say the owner will confirm the specifics."
+            : "They're not interested: thank them warmly in 1-2 sentences, leave the door open, and do NOT try to persuade them.";
+      const generated = await askJson(
+        "You are an outreach agent replying on behalf of a small business owner in an ongoing email thread. Professional, warm, concise (3-6 sentences). Never invent facts not present in the profile or thread. Plain text. Respond with strict JSON only.",
+        `Business you represent:
+${businessProfileText(business)}
+
+Thread so far (oldest first):
+${transcript}
+
+Their latest reply:
+${text.slice(0, 3000)}
+
+${guidance}
+
+Respond with JSON: {"body": string} — the reply email body, signed off with "${business.name ?? "the owner"}".`,
+      );
+      if (typeof generated.body !== "string" || !generated.body.trim()) return;
+      await agentmailApiFetch(
+        `/inboxes/${encodeURIComponent(outreach.inboxId)}/messages/${encodeURIComponent(messageRow.agentmailMessageId)}/reply`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: generated.body.trim() }),
+        },
+      );
+      await ctx.runMutation(internal.outreach.recordAutoReply, {
+        outreachId,
+        text: generated.body.trim(),
+      });
+    } catch (err) {
+      console.error("Auto-reply failed", err);
+    }
   },
 });

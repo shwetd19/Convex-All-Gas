@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, query } from "./_generated/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { requireOwnedBusiness } from "./businesses";
 
 // One line in the live "watch the agent work" feed.
 export const log = internalMutation({
@@ -15,20 +15,14 @@ export const log = internalMutation({
   },
 });
 
-// Reverse-chronological feed for the signed-in user's business.
-export const listMine = query({
-  args: {},
-  handler: async (ctx) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) return null;
-    const business = await ctx.db
-      .query("businesses")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .first();
-    if (!business) return null;
+// Reverse-chronological feed for one of the signed-in user's businesses.
+export const list = query({
+  args: { businessId: v.id("businesses") },
+  handler: async (ctx, { businessId }) => {
+    await requireOwnedBusiness(ctx, businessId);
     return await ctx.db
       .query("activity")
-      .withIndex("by_businessId", (q) => q.eq("businessId", business._id))
+      .withIndex("by_businessId", (q) => q.eq("businessId", businessId))
       .order("desc")
       .take(100);
   },

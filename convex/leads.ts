@@ -7,27 +7,19 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { getAuthUserId } from "@convex-dev/auth/server";
 import { leadTypeValidator, leadStatusValidator } from "./schema";
-import { requireBusiness } from "./businesses";
+import { requireOwnedBusiness } from "./businesses";
 import type { Doc } from "./_generated/dataModel";
 
-// The dashboard's main data: every lead for my business, each joined with
-// its outreach row (draft/sent/reply state). Live via useQuery.
-export const listMine = query({
-  args: {},
-  handler: async (ctx) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) return null;
-    const business = await ctx.db
-      .query("businesses")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .first();
-    if (!business) return null;
-
+// The dashboard's main data: every lead for one of my businesses, each
+// joined with its outreach row (draft/sent/reply state). Live via useQuery.
+export const list = query({
+  args: { businessId: v.id("businesses") },
+  handler: async (ctx, { businessId }) => {
+    await requireOwnedBusiness(ctx, businessId);
     const leads = await ctx.db
       .query("leads")
-      .withIndex("by_businessId", (q) => q.eq("businessId", business._id))
+      .withIndex("by_businessId", (q) => q.eq("businessId", businessId))
       .order("desc")
       .take(300);
 
@@ -69,9 +61,9 @@ async function approveLead(
 export const approve = mutation({
   args: { leadId: v.id("leads") },
   handler: async (ctx, { leadId }) => {
-    const business = await requireBusiness(ctx);
     const lead = await ctx.db.get(leadId);
-    if (!lead || lead.businessId !== business._id) throw new Error("Not your lead");
+    if (!lead) throw new Error("Lead not found");
+    await requireOwnedBusiness(ctx, lead.businessId);
     const outreach = await ctx.db
       .query("outreach")
       .withIndex("by_leadId", (q) => q.eq("leadId", leadId))
@@ -80,14 +72,14 @@ export const approve = mutation({
   },
 });
 
-// Batch approve — v1's "approve all pending drafts" button.
+// Batch approve — "approve all pending drafts" for one business.
 export const approveAll = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const business = await requireBusiness(ctx);
+  args: { businessId: v.id("businesses") },
+  handler: async (ctx, { businessId }) => {
+    await requireOwnedBusiness(ctx, businessId);
     const leads = await ctx.db
       .query("leads")
-      .withIndex("by_businessId", (q) => q.eq("businessId", business._id))
+      .withIndex("by_businessId", (q) => q.eq("businessId", businessId))
       .take(300);
     let approved = 0;
     for (const lead of leads) {
@@ -108,9 +100,9 @@ export const approveAll = mutation({
 export const skip = mutation({
   args: { leadId: v.id("leads") },
   handler: async (ctx, { leadId }) => {
-    const business = await requireBusiness(ctx);
     const lead = await ctx.db.get(leadId);
-    if (!lead || lead.businessId !== business._id) throw new Error("Not your lead");
+    if (!lead) throw new Error("Lead not found");
+    await requireOwnedBusiness(ctx, lead.businessId);
     await ctx.db.patch(leadId, { status: "skipped" });
   },
 });
@@ -118,12 +110,12 @@ export const skip = mutation({
 export const markWon = mutation({
   args: { leadId: v.id("leads") },
   handler: async (ctx, { leadId }) => {
-    const business = await requireBusiness(ctx);
     const lead = await ctx.db.get(leadId);
-    if (!lead || lead.businessId !== business._id) throw new Error("Not your lead");
+    if (!lead) throw new Error("Lead not found");
+    await requireOwnedBusiness(ctx, lead.businessId);
     await ctx.db.patch(leadId, { status: "won" });
     await ctx.db.insert("activity", {
-      businessId: business._id,
+      businessId: lead.businessId,
       leadId,
       kind: "system",
       message: `${lead.name} marked as won 🎉`,
@@ -150,7 +142,7 @@ export const byPlace = internalQuery({
 });
 
 // Insert a judged lead. Dedupes on placeId (places) or url (events) so
-// weekly rescans only surface genuinely new leads. Returns null on dupe.
+// rescans only surface genuinely new leads. Returns null on dupe.
 export const saveSourced = internalMutation({
   args: {
     businessId: v.id("businesses"),

@@ -67,6 +67,8 @@ export default defineSchema({
     approvalMode: v.union(v.literal("approve_each"), v.literal("auto_send")),
     followUpDelayDays: v.number(),
     weeklyRescan: v.boolean(),
+    // Agent auto-responds to inbound replies (undefined = on).
+    autoReply: v.optional(v.boolean()),
   }).index("by_userId", ["userId"]),
 
   // One row per sourced contact — the standing job, not a one-shot.
@@ -118,7 +120,12 @@ export default defineSchema({
     outreachId: v.id("outreach"),
     businessId: v.id("businesses"),
     direction: v.union(v.literal("outbound"), v.literal("inbound")),
-    kind: v.union(v.literal("initial"), v.literal("follow_up"), v.literal("reply")),
+    kind: v.union(
+      v.literal("initial"),
+      v.literal("follow_up"),
+      v.literal("reply"),
+      v.literal("auto_reply"),
+    ),
     subject: v.optional(v.string()),
     text: v.string(),
     from: v.optional(v.string()),

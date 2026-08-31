@@ -8,23 +8,21 @@ import {
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import type { Id } from "./_generated/dataModel";
 
-// One business per account (v1). All public functions derive the business
-// from the signed-in user — never from a client-supplied id.
-export async function requireBusiness(ctx: QueryCtx) {
+// A user can run any number of businesses. Every public function takes the
+// businessId it operates on and verifies ownership server-side — never
+// trusting the client beyond "which of MY businesses".
+export async function requireOwnedBusiness(ctx: QueryCtx, businessId: Id<"businesses">) {
   const userId = await getAuthUserId(ctx);
   if (!userId) throw new Error("Not signed in");
-  const business = await ctx.db
-    .query("businesses")
-    .withIndex("by_userId", (q) => q.eq("userId", userId))
-    .first();
-  if (!business) throw new Error("No business set up yet");
+  const business = await ctx.db.get(businessId);
+  if (!business || business.userId !== userId) throw new Error("Not your business");
   return business;
 }
 
-// Onboarding step 1: "Paste your business URL". Re-running replaces the
-// profile on the same row (a fresh intake), keeping existing leads —
-// sourcing dedupes by placeId anyway.
+// Add a business: "Paste your business URL". Always creates a new one —
+// users can run several in parallel.
 export const create = mutation({
   args: { url: v.string() },
   handler: async (ctx, { url }) => {
@@ -34,44 +32,22 @@ export const create = mutation({
     if (!trimmed) throw new Error("Enter your business URL");
     const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 
-    const existing = await ctx.db
-      .query("businesses")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .first();
-
-    let businessId;
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        url: normalized,
-        status: "scraping",
-        error: undefined,
-        name: undefined,
-        description: undefined,
-        offerings: undefined,
-        category: undefined,
-        address: undefined,
-        placeId: undefined,
-        lat: undefined,
-        lng: undefined,
-      });
-      businessId = existing._id;
-    } else {
-      businessId = await ctx.db.insert("businesses", {
-        userId,
-        url: normalized,
-        status: "scraping",
-        approvalMode: "approve_each",
-        followUpDelayDays: 4,
-        weeklyRescan: true,
-      });
-    }
+    const businessId = await ctx.db.insert("businesses", {
+      userId,
+      url: normalized,
+      status: "scraping",
+      approvalMode: "approve_each",
+      followUpDelayDays: 2,
+      weeklyRescan: true,
+      autoReply: true,
+    });
     await ctx.scheduler.runAfter(0, internal.pipeline.intakeBusiness, { businessId });
     return businessId;
   },
 });
 
-// The signed-in user's business, or null (signed out / not created yet).
-export const get = query({
+// All of the signed-in user's businesses, newest first.
+export const list = query({
   args: {},
   handler: async (ctx) => {
     const userId = await getAuthUserId(ctx);
@@ -79,29 +55,42 @@ export const get = query({
     return await ctx.db
       .query("businesses")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .first();
+      .order("desc")
+      .take(50);
   },
 });
 
-// Onboarding step 3 → 4: "Is this you?" → kick off the sourcing pipeline.
+// Onboarding: "Is this you?" → kick off the sourcing pipeline.
 export const confirm = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const business = await requireBusiness(ctx);
+  args: { businessId: v.id("businesses") },
+  handler: async (ctx, { businessId }) => {
+    const business = await requireOwnedBusiness(ctx, businessId);
     if (business.status !== "confirm") throw new Error("Nothing to confirm");
-    await ctx.db.patch(business._id, { status: "sourcing" });
+    await ctx.db.patch(businessId, { status: "sourcing" });
     await ctx.scheduler.runAfter(0, internal.pipeline.sourceLeads, {
-      businessId: business._id,
+      businessId,
       rescan: false,
     });
   },
 });
 
-// "Not me — start over": wipe this business and everything under it.
-export const reset = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const business = await requireBusiness(ctx);
+// Re-run intake on the same URL after a failure.
+export const retryIntake = mutation({
+  args: { businessId: v.id("businesses") },
+  handler: async (ctx, { businessId }) => {
+    const business = await requireOwnedBusiness(ctx, businessId);
+    if (business.status !== "failed") throw new Error("Nothing to retry");
+    await ctx.db.patch(businessId, { status: "scraping", error: undefined });
+    await ctx.scheduler.runAfter(0, internal.pipeline.intakeBusiness, { businessId });
+  },
+});
+
+// Delete a business and everything under it ("Not me — start over", or
+// removing one from the switcher).
+export const remove = mutation({
+  args: { businessId: v.id("businesses") },
+  handler: async (ctx, { businessId }) => {
+    const business = await requireOwnedBusiness(ctx, businessId);
     const leads = await ctx.db
       .query("leads")
       .withIndex("by_businessId", (q) => q.eq("businessId", business._id))
@@ -130,35 +119,38 @@ export const reset = mutation({
 
 export const updateSettings = mutation({
   args: {
+    businessId: v.id("businesses"),
     approvalMode: v.optional(v.union(v.literal("approve_each"), v.literal("auto_send"))),
     followUpDelayDays: v.optional(v.number()),
     weeklyRescan: v.optional(v.boolean()),
+    autoReply: v.optional(v.boolean()),
   },
-  handler: async (ctx, args) => {
-    const business = await requireBusiness(ctx);
+  handler: async (ctx, { businessId, ...args }) => {
+    await requireOwnedBusiness(ctx, businessId);
     const patch: Record<string, unknown> = {};
     if (args.approvalMode !== undefined) patch.approvalMode = args.approvalMode;
     if (args.followUpDelayDays !== undefined) {
       patch.followUpDelayDays = Math.min(30, Math.max(1, Math.round(args.followUpDelayDays)));
     }
     if (args.weeklyRescan !== undefined) patch.weeklyRescan = args.weeklyRescan;
-    await ctx.db.patch(business._id, patch);
+    if (args.autoReply !== undefined) patch.autoReply = args.autoReply;
+    await ctx.db.patch(businessId, patch);
   },
 });
 
 // Manual "rescan now" — same pipeline the weekly cron kicks off.
 export const rescanNow = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const business = await requireBusiness(ctx);
+  args: { businessId: v.id("businesses") },
+  handler: async (ctx, { businessId }) => {
+    const business = await requireOwnedBusiness(ctx, businessId);
     if (business.status !== "ready") throw new Error("Finish setup first");
     await ctx.db.insert("activity", {
-      businessId: business._id,
+      businessId,
       kind: "system",
       message: "Manual rescan started — checking for new nearby leads…",
     });
     await ctx.scheduler.runAfter(0, internal.pipeline.sourceLeads, {
-      businessId: business._id,
+      businessId,
       rescan: true,
     });
   },

@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { requireBusiness } from "./businesses";
+import { requireOwnedBusiness } from "./businesses";
 import { replyClassificationValidator } from "./schema";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -10,9 +10,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const getForLead = query({
   args: { leadId: v.id("leads") },
   handler: async (ctx, { leadId }) => {
-    const business = await requireBusiness(ctx);
     const lead = await ctx.db.get(leadId);
-    if (!lead || lead.businessId !== business._id) return null;
+    if (!lead) return null;
+    await requireOwnedBusiness(ctx, lead.businessId);
     const outreach = await ctx.db
       .query("outreach")
       .withIndex("by_leadId", (q) => q.eq("leadId", leadId))
@@ -30,9 +30,9 @@ export const getForLead = query({
 export const updateDraft = mutation({
   args: { leadId: v.id("leads"), subject: v.string(), draftText: v.string() },
   handler: async (ctx, { leadId, subject, draftText }) => {
-    const business = await requireBusiness(ctx);
     const lead = await ctx.db.get(leadId);
-    if (!lead || lead.businessId !== business._id) throw new Error("Not your lead");
+    if (!lead) throw new Error("Lead not found");
+    await requireOwnedBusiness(ctx, lead.businessId);
     const outreach = await ctx.db
       .query("outreach")
       .withIndex("by_leadId", (q) => q.eq("leadId", leadId))
@@ -47,9 +47,9 @@ export const updateDraft = mutation({
 export const followUpNow = mutation({
   args: { leadId: v.id("leads") },
   handler: async (ctx, { leadId }) => {
-    const business = await requireBusiness(ctx);
     const lead = await ctx.db.get(leadId);
-    if (!lead || lead.businessId !== business._id) throw new Error("Not your lead");
+    if (!lead) throw new Error("Lead not found");
+    await requireOwnedBusiness(ctx, lead.businessId);
     const outreach = await ctx.db
       .query("outreach")
       .withIndex("by_leadId", (q) => q.eq("leadId", leadId))
@@ -68,6 +68,44 @@ export const followUpNow = mutation({
 export const get = internalQuery({
   args: { outreachId: v.id("outreach") },
   handler: (ctx, { outreachId }) => ctx.db.get(outreachId),
+});
+
+export const getMessageRow = internalQuery({
+  args: { messageRowId: v.id("messages") },
+  handler: (ctx, { messageRowId }) => ctx.db.get(messageRowId),
+});
+
+export const listThreadMessages = internalQuery({
+  args: { outreachId: v.id("outreach") },
+  handler: (ctx, { outreachId }) =>
+    ctx.db
+      .query("messages")
+      .withIndex("by_outreachId", (q) => q.eq("outreachId", outreachId))
+      .take(50),
+});
+
+// The agent's own answer to an inbound reply (auto-reply mode).
+export const recordAutoReply = internalMutation({
+  args: { outreachId: v.id("outreach"), text: v.string() },
+  handler: async (ctx, { outreachId, text }) => {
+    const outreach = await ctx.db.get(outreachId);
+    if (!outreach) return;
+    const lead = await ctx.db.get(outreach.leadId);
+    await ctx.db.insert("messages", {
+      outreachId,
+      businessId: outreach.businessId,
+      direction: "outbound",
+      kind: "auto_reply",
+      text,
+      sentAt: Date.now(),
+    });
+    await ctx.db.insert("activity", {
+      businessId: outreach.businessId,
+      leadId: outreach.leadId,
+      kind: "reply",
+      message: `Agent replied to ${lead?.name ?? "lead"} in-thread`,
+    });
+  },
 });
 
 export const ensureForLead = internalMutation({
