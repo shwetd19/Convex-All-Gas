@@ -64,6 +64,15 @@ function formatWhen(ms: number): string {
   });
 }
 
+const SCAN_WINDOW_MS = 5 * 60 * 1000;
+
+function formatClock(ms: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
 function formatCountdown(ms: number): string {
   if (ms <= 0) return "any minute";
   const minutes = Math.round(ms / 60_000);
@@ -1193,7 +1202,14 @@ function LeadPage({
   const approveAll = useMutation(api.leads.approveAll);
   const [openLeadId, setOpenLeadId] = useState<Id<"leads"> | null>(null);
   const [approvingAll, setApprovingAll] = useState(false);
-  const now = useNowTick();
+  const now = useNowTick(1000);
+
+  const scanUntil = business.scanUntil;
+  const scanning =
+    (scanUntil !== undefined && now < scanUntil) ||
+    (scanUntil === undefined && business.status === "sourcing");
+  const scanJustDone = scanUntil !== undefined && now >= scanUntil && now - scanUntil < 120_000;
+  const liveLeads = rows.filter((r) => r.lead.status !== "skipped").length;
 
   const readyDrafts = rows.filter(
     (r) =>
@@ -1222,10 +1238,34 @@ function LeadPage({
 
       <InboxBanner />
 
-      {business.status === "sourcing" && (
-        <div className="notice notice-scan">
-          <span className="spinner" /> Scanning the block — leads appear below as each place is
-          judged (capped at 5 minutes per scan).
+      {scanning && (
+        <div className="notice notice-scan scan-notice">
+          <div className="scan-notice-row">
+            <span>
+              <span className="spinner" /> Still checking your block — leads keep appearing below
+              as they're found and judged.
+            </span>
+            {scanUntil !== undefined && (
+              <span className="scan-countdown">{formatClock(scanUntil - now)} left</span>
+            )}
+          </div>
+          {scanUntil !== undefined && (
+            <div className="scan-track">
+              <div
+                className="scan-fill"
+                style={{
+                  width: `${Math.min(100, Math.max(2, (1 - (scanUntil - now) / SCAN_WINDOW_MS) * 100))}%`,
+                }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {!scanning && scanJustDone && (
+        <div className="notice notice-done">
+          ✓ Done checking — {liveLeads} lead{liveLeads === 1 ? "" : "s"} on the board. New finds
+          come from the weekly rescan, or rescan any time from Settings.
         </div>
       )}
 

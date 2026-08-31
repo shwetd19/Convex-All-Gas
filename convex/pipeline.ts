@@ -333,6 +333,7 @@ export const sourceLeads = internalAction({
         throw new Error("Business has no resolved location — restart setup");
       }
       const deadline = Date.now() + SCAN_BUDGET_MS;
+      await ctx.runMutation(internal.businesses.setScanWindow, { businessId, scanUntil: deadline });
       await log(rescan ? "Rescanning your block for new leads…" : "Scanning your block…");
 
       let pool = await gatherCandidatePool(business);

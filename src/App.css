@@ -747,6 +747,47 @@ a {
   color: var(--amber);
 }
 
+.notice-done {
+  background: var(--success-soft);
+  border: 1px solid var(--success-border);
+  color: var(--success);
+  font-weight: 600;
+}
+
+.scan-notice {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.scan-notice-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.scan-countdown {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.scan-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(23, 92, 211, 0.15);
+  overflow: hidden;
+}
+
+.scan-fill {
+  height: 100%;
+  background: var(--info);
+  border-radius: 999px;
+  transition: width 1s linear;
+}
+
 .stats-strip {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

@@ -71,6 +71,9 @@ export default defineSchema({
     error: v.optional(v.string()),
     scrapedAt: v.optional(v.number()),
     lastScanAt: v.optional(v.number()),
+    // End of the current scan window (the 5-minute budget) — the UI shows
+    // "still checking" until this passes, while leads stream in live.
+    scanUntil: v.optional(v.number()),
     // Settings (dashboard spec): approve-each is the demo-safe default.
     approvalMode: v.union(v.literal("approve_each"), v.literal("auto_send")),
     followUpDelayDays: v.number(),

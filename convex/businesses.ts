@@ -217,6 +217,13 @@ export const fail = internalMutation({
   },
 });
 
+export const setScanWindow = internalMutation({
+  args: { businessId: v.id("businesses"), scanUntil: v.number() },
+  handler: async (ctx, { businessId, scanUntil }) => {
+    await ctx.db.patch(businessId, { scanUntil });
+  },
+});
+
 export const markScanned = internalMutation({
   args: { businessId: v.id("businesses") },
   handler: async (ctx, { businessId }) => {
