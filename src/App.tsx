@@ -12,7 +12,7 @@ type LeadDoc = Doc<"leads">;
 type OutreachDoc = Doc<"outreach">;
 type MessageDoc = Doc<"messages">;
 type LeadRow = { lead: LeadDoc; outreach: OutreachDoc | null };
-type Page = LeadDoc["type"] | "activity" | "profile" | "settings";
+type Page = LeadDoc["type"] | "activity" | "profile" | "settings" | "contact";
 
 const TYPE_LABEL: Record<LeadDoc["type"], string> = {
   competitor: "Competitor",
@@ -143,6 +143,12 @@ function NavIcon({ name }: { name: string }) {
         <path d="M1 14h6M9 8h6M17 16h6" />
       </>
     ),
+    contact: (
+      <>
+        <rect x="2" y="4" width="20" height="16" rx="2" />
+        <path d="m22 6-10 7L2 6" />
+      </>
+    ),
   };
   return (
     <svg
@@ -230,6 +236,7 @@ function Sidebar({
         <div className="side-section-label">Agent</div>
         {item("activity", "Activity", "activity")}
         {item("settings", "Settings", "settings")}
+        {item("contact", "Contact", "contact")}
       </nav>
 
       <div className="side-footer">
@@ -276,32 +283,54 @@ function Onboarding({
   };
 
   return (
-    <div className="panel-card onboarding-card">
-      <h2>Add a business</h2>
-      <p className="panel-hint">
-        Paste the business website. The agent reads the site, finds it on the map, then scans
-        the surrounding block for customers, competitors, complements, offices, and events
-        worth pitching — and drafts the outreach for you.
-      </p>
-      {error && <div className="error-banner">{error}</div>}
-      <form onSubmit={handleSubmit} className="onboarding-form">
+    <div className="hero">
+      <h1 className="hero-title">Whose block are we mapping today?</h1>
+      <p className="hero-sub">Drop a business website — the agent takes it from there.</p>
+      <form onSubmit={handleSubmit} className="ask-bar">
         <input
-          className="text-input onboarding-input"
+          className="ask-input"
           type="text"
-          placeholder="yourshop.com"
+          placeholder="yourbusiness.com"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
+          autoFocus
           required
         />
-        <button className="btn btn-primary" type="submit" disabled={submitting}>
+        <button className="btn btn-primary ask-submit" type="submit" disabled={submitting}>
           {submitting ? "Starting…" : "Map my block"}
         </button>
-        {onCancel && (
-          <button className="btn btn-ghost" type="button" onClick={onCancel}>
-            Cancel
-          </button>
-        )}
       </form>
+      {error && <div className="error-banner hero-error">{error}</div>}
+      {onCancel && (
+        <button className="btn btn-ghost btn-sm" type="button" onClick={onCancel}>
+          Cancel
+        </button>
+      )}
+      <ol className="hero-steps">
+        <li>
+          <span className="hero-step-num">1</span>
+          <div>
+            <strong>Reads &amp; locates.</strong> The agent reads the site and pins the business
+            on the map — you confirm it's the right one before anything runs.
+          </div>
+        </li>
+        <li>
+          <span className="hero-step-num">2</span>
+          <div>
+            <strong>Maps the block &amp; the market.</strong> It scans every nearby place plus
+            startup &amp; B2B directories, judging each one — customers, competitors,
+            complements, offices, events.
+          </div>
+        </li>
+        <li>
+          <span className="hero-step-num">3</span>
+          <div>
+            <strong>Works the leads.</strong> Personalized outreach drafted for your approval,
+            sent from the agent's own inbox — follow-ups, reply classification, and full
+            threads, all live in here.
+          </div>
+        </li>
+      </ol>
     </div>
   );
 }
@@ -1190,6 +1219,70 @@ function SettingsPanel({ business }: { business: BusinessDoc }) {
   );
 }
 
+const CONTACT_LINKS: { label: string; domain: string; href: string }[] = [
+  { label: "LinkedIn", domain: "linkedin.com/in/shwetas-dhake", href: "https://www.linkedin.com/in/shwetas-dhake" },
+  { label: "Twitter / X", domain: "x.com/shwetasd19", href: "https://x.com/shwetasd19" },
+  { label: "GitHub", domain: "github.com/shwetd19", href: "https://github.com/shwetd19" },
+  { label: "Project repo", domain: "github.com/shwetd19/Convex-All-Gas", href: "https://github.com/shwetd19/Convex-All-Gas" },
+  { label: "Portfolio", domain: "shwetas.dev", href: "https://shwetas.dev/" },
+];
+
+function ContactPage() {
+  const [copied, setCopied] = useState(false);
+  const email = "shwetasdhake16@gmail.com";
+  return (
+    <>
+      <div className="page-head">
+        <h2 className="page-title">Contact</h2>
+        <span className="page-sub">Say hi — feedback, ideas, or just to talk shop.</span>
+      </div>
+      <div className="contact-card">
+        <img
+          src="https://avatars.githubusercontent.com/u/119885670?v=4"
+          alt="Shwetas Dhake"
+          className="contact-avatar"
+          width="88"
+          height="88"
+        />
+        <h2 className="contact-name">Shwetas Dhake</h2>
+        <div className="contact-role">Developer — built Block</div>
+        <div className="contact-location">Pune, India</div>
+        <div className="contact-email">
+          <span className="inbox-pill">{email}</span>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => {
+              navigator.clipboard?.writeText(email).catch(() => {});
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            }}
+          >
+            {copied ? "Copied ✓" : "Copy"}
+          </button>
+        </div>
+        <div className="contact-links">
+          {CONTACT_LINKS.map((l) => (
+            <a key={l.href} href={l.href} target="_blank" rel="noreferrer" className="contact-link">
+              <span>
+                {l.label}
+                <span className="contact-link-domain"> · {l.domain}</span>
+              </span>
+              <span className="contact-link-arrow">↗</span>
+            </a>
+          ))}
+        </div>
+        <div className="contact-stack">
+          {["Convex", "Google Places", "Firecrawl", "OpenAI", "AgentMail"].map((s) => (
+            <span key={s} className="stack-chip">
+              {s}
+            </span>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
 function LeadPage({
   business,
   rows,
@@ -1359,6 +1452,8 @@ function Root() {
     content = <ConfirmCard business={selected} />;
   } else if (selected.status === "failed") {
     content = <FailedCard business={selected} />;
+  } else if (page === "contact") {
+    content = <ContactPage />;
   } else if (page === "profile") {
     content = <ProfilePage key={selected._id} business={selected} />;
   } else if (page === "settings") {
