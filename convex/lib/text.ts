@@ -58,6 +58,50 @@ export function textToHtml(text: string): string {
   return `<div style="font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.6;color:#111827;max-width:560px">${html}</div>`;
 }
 
+// Domains that appear as links on directory profile pages but are never
+// the company's own website.
+const EXCLUDED_LINK_DOMAINS = [
+  "ycombinator.com",
+  "producthunt.com",
+  "wellfound.com",
+  "angel.co",
+  "clutch.co",
+  "f6s.com",
+  "crunchbase.com",
+  "twitter.com",
+  "x.com",
+  "linkedin.com",
+  "facebook.com",
+  "instagram.com",
+  "github.com",
+  "youtube.com",
+  "google.com",
+  "apple.com",
+  "medium.com",
+  "cloudfront.net",
+  "amazonaws.com",
+];
+
+/**
+ * From a scraped directory profile (YC, Product Hunt, …), find the first
+ * outbound link that plausibly is the company's own website.
+ */
+export function extractExternalUrl(markdown: string): string | undefined {
+  const urls = markdown.match(/https?:\/\/[^\s"')\]]+/g) ?? [];
+  for (const raw of urls) {
+    try {
+      const parsed = new URL(raw);
+      const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
+      if (EXCLUDED_LINK_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))) continue;
+      if (/\.(png|jpe?g|svg|gif|css|js|webp|ico|pdf)(\?|$)/i.test(parsed.pathname)) continue;
+      return parsed.origin;
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 
 // Addresses that show up in scraped pages but are never a real contact:

@@ -154,6 +154,7 @@ export const saveSourced = internalMutation({
     sourceUrl: v.optional(v.string()),
     contactEmail: v.optional(v.string()),
     relevanceNote: v.optional(v.string()),
+    source: v.optional(v.string()),
     evidence: v.optional(v.string()),
     score: v.optional(v.number()),
   },
@@ -210,13 +211,17 @@ export const saveEnrichment = internalMutation({
     leadId: v.id("leads"),
     contactEmail: v.optional(v.string()),
     evidence: v.optional(v.string()),
+    // Directory leads start with the directory profile as their url; once
+    // enrichment finds the company's own site, it becomes the lead's url.
+    url: v.optional(v.string()),
   },
-  handler: async (ctx, { leadId, contactEmail, evidence }) => {
+  handler: async (ctx, { leadId, contactEmail, evidence, url }) => {
     const lead = await ctx.db.get(leadId);
     if (!lead) return;
     const patch: Record<string, unknown> = {};
     if (contactEmail && !lead.contactEmail) patch.contactEmail = contactEmail;
     if (evidence && !lead.evidence) patch.evidence = evidence;
+    if (url) patch.url = url;
     if (Object.keys(patch).length > 0) await ctx.db.patch(leadId, patch);
     if (contactEmail && !lead.contactEmail) {
       await ctx.db.insert("activity", {

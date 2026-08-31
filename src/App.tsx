@@ -980,6 +980,7 @@ function LeadCard({ row, now, onOpen }: { row: LeadRow; now: number; onOpen: () 
         {lead.relevanceNote && <div className="lead-note">{lead.relevanceNote}</div>}
         <div className="lead-contact">
           {lead.contactEmail ?? "no contact email found"}
+          {lead.source ? ` · via ${lead.source}` : ""}
           {sent &&
             outreach?.nextActionAt !== undefined &&
             outreach.followUpSentAt === undefined &&

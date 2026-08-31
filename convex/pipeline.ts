@@ -17,7 +17,7 @@ import OpenAI from "openai";
 import { FirecrawlClient } from "@firecrawl/firecrawl-convex";
 import { agentmailApiFetch } from "./lib/agentmailRest";
 import { searchNearbyPlaces, searchTextPlaces, type Place } from "./lib/places";
-import { extractEmails, textToHtml } from "./lib/text";
+import { extractEmails, extractExternalUrl, textToHtml } from "./lib/text";
 import type { Id, Doc } from "./_generated/dataModel";
 
 const firecrawl = new FirecrawlClient(components.firecrawl);
@@ -33,6 +33,17 @@ const ENRICH_SPACING_MS = 10_000;
 const TRIAGE_CHUNK = 40;
 const MIN_SCORE = 30;
 const EVENT_PICKS = 5;
+
+// Startup / B2B directories searched for customer prospects beyond the
+// physical block — each queried via Firecrawl web search with `site:`.
+const DIRECTORIES: { name: string; site: string }[] = [
+  { name: "Y Combinator", site: "ycombinator.com/companies" },
+  { name: "Product Hunt", site: "producthunt.com" },
+  { name: "Wellfound", site: "wellfound.com/company" },
+  { name: "Clutch", site: "clutch.co" },
+  { name: "F6S", site: "f6s.com" },
+];
+const DIRECTORY_RESULTS_PER_SITE = 8;
 // Grace period before the agent answers an inbound reply on the owner's
 // behalf — the owner is notified immediately and can reply themselves.
 const AUTO_REPLY_DELAY_MS = 60 * 60 * 1000;
@@ -376,6 +387,10 @@ export const sourceLeads = internalAction({
       }
 
       await ctx.scheduler.runAfter(2_000, internal.pipeline.sourceEvents, { businessId, deadline });
+      await ctx.scheduler.runAfter(4_000, internal.pipeline.sourceDirectoryProspects, {
+        businessId,
+        deadline,
+      });
       await ctx.runMutation(internal.businesses.markScanned, { businessId });
       await log(
         `Kept ${kept} leads. Finding contact emails for the top ${toEnrich.length} within the scan budget — the rest stay listed for later enrichment.`,
@@ -407,20 +422,155 @@ export const enrichLeadDetails = internalAction({
     }
 
     let contactEmail = extractEmails(content)[0];
-    if (!contactEmail && lead.url) {
+    let evidence = content ? content.replace(/\s+/g, " ").slice(0, 350) : undefined;
+    let companyUrl: string | undefined;
+
+    // Directory leads: the stored url is the directory profile page — hop
+    // to the company's own website for real evidence and a contact email.
+    if (lead.source && content) {
+      companyUrl = extractExternalUrl(content);
+      if (companyUrl && (deadline === undefined || Date.now() < deadline)) {
+        try {
+          const siteMd = (await scrapeMarkdown(ctx, companyUrl)).slice(0, 8000);
+          if (siteMd) {
+            evidence = siteMd.replace(/\s+/g, " ").slice(0, 350) || evidence;
+            if (!contactEmail) contactEmail = extractEmails(siteMd)[0];
+          }
+        } catch (err) {
+          console.error("Company site scrape failed", companyUrl, err);
+        }
+      }
+    }
+
+    if (!contactEmail) {
       try {
-        const origin = new URL(lead.url).origin;
+        const origin = new URL(companyUrl ?? lead.url).origin;
         contactEmail = extractEmails(await scrapeMarkdown(ctx, `${origin}/contact`))[0];
       } catch {
         // no contact page — lead stays listed without an email
       }
     }
 
-    const evidence = content ? content.replace(/\s+/g, " ").slice(0, 350) : undefined;
-    if (!contactEmail && !evidence) return;
-    await ctx.runMutation(internal.leads.saveEnrichment, { leadId, contactEmail, evidence });
+    if (!contactEmail && !evidence && !companyUrl) return;
+    await ctx.runMutation(internal.leads.saveEnrichment, {
+      leadId,
+      contactEmail,
+      evidence,
+      url: companyUrl,
+    });
     if (contactEmail) {
       await ctx.scheduler.runAfter(0, internal.pipeline.generateDraft, { leadId });
+    }
+  },
+});
+
+// Directory branch: beyond the physical block, search startup/B2B
+// directories (YC, Product Hunt, Wellfound, Clutch, F6S) for companies
+// matching this business's ideal customer profile. Firecrawl search
+// grounds the pages; OpenAI triages; enrichment hops from directory
+// profile → company site → contact email.
+export const sourceDirectoryProspects = internalAction({
+  args: { businessId: v.id("businesses"), deadline: v.optional(v.number()) },
+  handler: async (ctx, { businessId, deadline }) => {
+    if (deadline !== undefined && Date.now() > deadline) return;
+    const business = await ctx.runQuery(internal.businesses.getById, { businessId });
+    if (!business) return;
+    const log = (message: string) =>
+      ctx.runMutation(internal.activity.log, { businessId, kind: "sourcing", message });
+
+    try {
+      const kw = await askJson(
+        "You write short search phrases describing the types of companies that would BUY from a given business (its ideal customer profile). Respond with strict JSON only.",
+        `Business:
+${businessProfileText(business)}
+
+Respond with JSON: {"keywords": string[]} — 2 short phrases (2-4 words each) describing its ideal customer companies, e.g. ["water utility software", "energy utilities"] for a utility-management platform, or ["specialty coffee roaster", "office catering"] for a cafe supplier.`,
+      );
+      const keywords: string[] = Array.isArray(kw.keywords)
+        ? kw.keywords.filter((s: unknown): s is string => typeof s === "string" && !!s.trim()).slice(0, 2)
+        : [];
+      if (keywords.length === 0) return;
+      await log(`Searching ${DIRECTORIES.length} startup & B2B directories for "${keywords.join('", "')}"…`);
+
+      type Entry = { url: string; title?: string; description?: string; directory: string };
+      const entries: Entry[] = [];
+      const seenUrls = new Set<string>();
+      for (let i = 0; i < DIRECTORIES.length; i++) {
+        if (deadline !== undefined && Date.now() > deadline) break;
+        const dir = DIRECTORIES[i];
+        const keyword = keywords[i % keywords.length];
+        try {
+          const results: any = await firecrawl.search(ctx, `site:${dir.site} ${keyword}`, {
+            limit: DIRECTORY_RESULTS_PER_SITE,
+          } as any);
+          const web: any[] =
+            results?.web ??
+            results?.results ??
+            results?.data?.web ??
+            (Array.isArray(results?.data) ? results.data : []);
+          for (const r of web ?? []) {
+            if (!r?.url || seenUrls.has(r.url)) continue;
+            seenUrls.add(r.url);
+            entries.push({ url: r.url, title: r.title, description: r.description, directory: dir.name });
+          }
+        } catch (err) {
+          console.error("Directory search failed", dir.name, err);
+        }
+      }
+      if (entries.length === 0) {
+        await log("No directory prospects found this scan.");
+        return;
+      }
+
+      const listing = entries
+        .map((e, i) => `${i + 1}. [${e.directory}] ${e.title ?? e.url}\n   ${e.url}\n   ${e.description ?? ""}`)
+        .join("\n");
+      const picked = await askJson(
+        "You triage directory search results into customer prospects for a business. Keep only real company profile/listing pages for companies that would plausibly BUY from the business — drop category pages, articles, and irrelevant companies. Respond with strict JSON only.",
+        `My business:
+${businessProfileText(business)}
+
+Directory search results:
+${listing}
+
+Respond with JSON: {"items": [{"index": <1-based number>, "name": string, "relevanceNote": string, "score": number}]}
+- "name": the company's clean name (not the page title boilerplate).
+- "relevanceNote": ONE short sentence on why they'd buy.
+- "score": 0-100 how promising. Include only genuine prospects.`,
+      );
+      const items: any[] = Array.isArray(picked.items) ? picked.items : [];
+      const inserted: Id<"leads">[] = [];
+      for (const item of items) {
+        const entry = entries[Number(item?.index) - 1];
+        if (!entry || typeof item.name !== "string") continue;
+        const score = typeof item.score === "number" ? item.score : 0;
+        if (score < MIN_SCORE) continue;
+        const leadId: Id<"leads"> | null = await ctx.runMutation(internal.leads.saveSourced, {
+          businessId,
+          type: "customer",
+          name: item.name,
+          url: entry.url,
+          sourceUrl: entry.url,
+          relevanceNote: typeof item.relevanceNote === "string" ? item.relevanceNote : undefined,
+          source: entry.directory,
+          score,
+        });
+        if (leadId) inserted.push(leadId);
+      }
+      await log(
+        `Found ${inserted.length} directory prospects — digging for their websites and contact emails…`,
+      );
+
+      for (let i = 0; i < inserted.length; i++) {
+        const fireAt = i * ENRICH_SPACING_MS;
+        if (deadline !== undefined && Date.now() + fireAt > deadline - 10_000) break;
+        await ctx.scheduler.runAfter(fireAt, internal.pipeline.enrichLeadDetails, {
+          leadId: inserted[i],
+          deadline,
+        });
+      }
+    } catch (err) {
+      await log(`Directory search unavailable: ${errMessage(err)}`);
     }
   },
 });

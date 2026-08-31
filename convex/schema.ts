@@ -90,6 +90,9 @@ export default defineSchema({
     sourceUrl: v.optional(v.string()),
     contactEmail: v.optional(v.string()),
     relevanceNote: v.optional(v.string()),
+    // Where this lead was discovered ("Y Combinator", "Product Hunt", …);
+    // unset for Google Places / event leads.
+    source: v.optional(v.string()),
     // The scraped snippet that justified including them — shown as
     // sourcing evidence in the lead detail view.
     evidence: v.optional(v.string()),
