@@ -86,13 +86,21 @@ function businessProfileText(business: {
   offerings?: string[];
   category?: string;
   address?: string;
+  teamSize?: string;
+  domain?: string;
+  foundedYear?: string;
+  notes?: string;
 }): string {
   return [
     `Name: ${business.name ?? business.url}`,
     `Category: ${business.category ?? "unknown"}`,
+    business.domain ? `Industry/domain: ${business.domain}` : "",
     `Address: ${business.address ?? "unknown"}`,
     `What they sell/do: ${business.description ?? "unknown"}`,
     business.offerings?.length ? `Offerings: ${business.offerings.join("; ")}` : "",
+    business.teamSize ? `Team size: ${business.teamSize}` : "",
+    business.foundedYear ? `Founded: ${business.foundedYear}` : "",
+    business.notes ? `Owner's notes: ${business.notes}` : "",
   ]
     .filter(Boolean)
     .join("\n");

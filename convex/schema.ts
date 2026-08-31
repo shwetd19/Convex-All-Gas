@@ -55,6 +55,12 @@ export default defineSchema({
     placeId: v.optional(v.string()),
     lat: v.optional(v.number()),
     lng: v.optional(v.number()),
+    // Extra profile details the owner fills in on the Profile page — also
+    // fed into the outreach prompts.
+    teamSize: v.optional(v.string()),
+    domain: v.optional(v.string()),
+    foundedYear: v.optional(v.string()),
+    notes: v.optional(v.string()),
     status: v.union(
       v.literal("scraping"),
       v.literal("confirm"),

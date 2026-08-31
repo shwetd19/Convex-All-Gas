@@ -12,6 +12,7 @@ type LeadDoc = Doc<"leads">;
 type OutreachDoc = Doc<"outreach">;
 type MessageDoc = Doc<"messages">;
 type LeadRow = { lead: LeadDoc; outreach: OutreachDoc | null };
+type Page = LeadDoc["type"] | "activity" | "profile" | "settings";
 
 const TYPE_LABEL: Record<LeadDoc["type"], string> = {
   competitor: "Competitor",
@@ -20,6 +21,14 @@ const TYPE_LABEL: Record<LeadDoc["type"], string> = {
   event: "Event",
   customer: "Customer",
 };
+
+const LEAD_NAV: { key: LeadDoc["type"]; label: string }[] = [
+  { key: "customer", label: "Customers" },
+  { key: "competitor", label: "Competitors" },
+  { key: "complement", label: "Complements" },
+  { key: "office", label: "Offices" },
+  { key: "event", label: "Events" },
+];
 
 const STATUS_LABEL: Record<LeadDoc["status"], string> = {
   sourced: "New lead",
@@ -72,64 +81,95 @@ function useNowTick(intervalMs = 30_000): number {
   return now;
 }
 
-// ---------------------------------------------------------------- shell
+// ---------------------------------------------------------------- sidebar
 
-function TopBar({
+function Sidebar({
   businesses,
   selectedId,
   onSelect,
   onAdd,
+  page,
+  setPage,
+  rows,
 }: {
   businesses: BusinessDoc[];
   selectedId: Id<"businesses"> | null;
   onSelect: (id: Id<"businesses">) => void;
   onAdd: () => void;
+  page: Page;
+  setPage: (p: Page) => void;
+  rows: LeadRow[] | undefined;
 }) {
   const me = useQuery(api.users.me);
   const { signOut } = useAuthActions();
+  const countFor = (t: LeadDoc["type"]) => rows?.filter((r) => r.lead.type === t).length ?? 0;
+
+  const item = (key: Page, label: string, count?: number) => (
+    <button
+      key={key}
+      className={`side-item ${page === key ? "side-item-active" : ""}`}
+      onClick={() => setPage(key)}
+    >
+      <span>{label}</span>
+      {count !== undefined && <span className="side-count">{count}</span>}
+    </button>
+  );
+
   return (
-    <div className="topbar">
-      <div className="topbar-inner">
-        <div className="brand">
-          <img src="/logo.svg" alt="" className="brand-logo" width="32" height="32" />
-          <span className="brand-name">Block</span>
-        </div>
-        <div className="topbar-actions">
-          {businesses.length > 0 && (
-            <>
-              <select
-                className="biz-switcher"
-                value={selectedId ?? businesses[0]._id}
-                onChange={(e) => onSelect(e.target.value as Id<"businesses">)}
-              >
-                {businesses.map((b) => (
-                  <option key={b._id} value={b._id}>
-                    {b.name ?? b.url}
-                  </option>
-                ))}
-              </select>
-              <button className="btn btn-secondary btn-sm" onClick={onAdd}>
-                + Add business
-              </button>
-            </>
-          )}
-          {me && (
-            <div className="account-bar">
-              <span className="account-email">{me.email}</span>
-              <button className="btn btn-ghost btn-sm" onClick={() => void signOut()}>
-                Sign out
-              </button>
-            </div>
-          )}
-        </div>
+    <aside className="sidebar">
+      <div className="side-brand">
+        <img src="/logo.svg" alt="" className="brand-logo" width="32" height="32" />
+        <span className="brand-name">Block</span>
       </div>
-    </div>
+
+      {businesses.length > 0 && (
+        <>
+          <select
+            className="side-select"
+            value={selectedId ?? businesses[0]._id}
+            onChange={(e) => onSelect(e.target.value as Id<"businesses">)}
+          >
+            {businesses.map((b) => (
+              <option key={b._id} value={b._id}>
+                {b.name ?? b.url}
+              </option>
+            ))}
+          </select>
+          <button className="btn btn-secondary btn-sm side-add" onClick={onAdd}>
+            + Add business
+          </button>
+        </>
+      )}
+
+      <nav className="side-nav">
+        <div className="side-section-label">Workspace</div>
+        {item("profile", "Business profile")}
+        <div className="side-section-label">Leads</div>
+        {LEAD_NAV.map((t) => item(t.key, t.label, countFor(t.key)))}
+        <div className="side-section-label">Agent</div>
+        {item("activity", "Activity")}
+        {item("settings", "Settings")}
+      </nav>
+
+      <div className="side-footer">
+        {me && <span className="account-email">{me.email}</span>}
+        <button className="btn btn-ghost btn-sm" onClick={() => void signOut()}>
+          Sign out
+        </button>
+      </div>
+    </aside>
   );
 }
 
 // ------------------------------------------------------------ onboarding
 
-function Onboarding({ onCreated, onCancel }: { onCreated: (id: Id<"businesses">) => void; onCancel?: () => void }) {
+function Onboarding({
+  onCreated,
+  onCancel,
+}: {
+  onCreated: (id: Id<"businesses">) => void;
+  onCancel?: () => void;
+}) {
   const create = useMutation(api.businesses.create);
   const [url, setUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -154,8 +194,8 @@ function Onboarding({ onCreated, onCancel }: { onCreated: (id: Id<"businesses">)
       <h2>Add a business</h2>
       <p className="panel-hint">
         Paste the business website. The agent reads the site, finds it on the map, then scans
-        the surrounding block for competitors, complements, offices, and events worth pitching
-        — and drafts the outreach for you.
+        the surrounding block for customers, competitors, complements, offices, and events
+        worth pitching — and drafts the outreach for you.
       </p>
       {error && <div className="error-banner">{error}</div>}
       <form onSubmit={handleSubmit} className="onboarding-form">
@@ -287,6 +327,155 @@ function FailedCard({ business }: { business: BusinessDoc }) {
   );
 }
 
+// --------------------------------------------------------------- profile
+
+function ProfilePage({ business }: { business: BusinessDoc }) {
+  const updateProfile = useMutation(api.businesses.updateProfile);
+  const [form, setForm] = useState({
+    name: business.name ?? "",
+    category: business.category ?? "",
+    domain: business.domain ?? "",
+    teamSize: business.teamSize ?? "",
+    foundedYear: business.foundedYear ?? "",
+    description: business.description ?? "",
+    notes: business.notes ?? "",
+  });
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const set = (key: keyof typeof form) => (e: { target: { value: string } }) => {
+    setForm((f) => ({ ...f, [key]: e.target.value }));
+    setSaved(false);
+  };
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await updateProfile({ businessId: business._id, ...form });
+      setSaved(true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="page-head">
+        <h2 className="page-title">Business profile</h2>
+        <span className="page-sub">
+          Everything here feeds the agent's outreach — richer profile, better pitches.
+        </span>
+      </div>
+      <div className="profile-grid">
+        <div className="profile-card profile-card-full">
+          <div className="section-label">Identity</div>
+          <div className="profile-row">
+            <label className="field-label">
+              Business name
+              <input className="text-input" value={form.name} onChange={set("name")} />
+            </label>
+            <label className="field-label">
+              Category
+              <input
+                className="text-input"
+                value={form.category}
+                onChange={set("category")}
+                placeholder="e.g. coffee shop, IT services"
+              />
+            </label>
+          </div>
+          <div className="profile-meta">
+            <a href={business.url} target="_blank" rel="noreferrer">
+              {business.url}
+            </a>
+            {business.address ? ` · ${business.address}` : ""}
+          </div>
+        </div>
+
+        <div className="profile-card">
+          <div className="section-label">Details</div>
+          <label className="field-label">
+            Business domain / industry
+            <input
+              className="text-input"
+              value={form.domain}
+              onChange={set("domain")}
+              placeholder="e.g. AI product engineering, specialty food"
+            />
+          </label>
+          <label className="field-label">
+            Team size
+            <input
+              className="text-input"
+              value={form.teamSize}
+              onChange={set("teamSize")}
+              placeholder="e.g. 25-50"
+            />
+          </label>
+          <label className="field-label">
+            Founded
+            <input
+              className="text-input"
+              value={form.foundedYear}
+              onChange={set("foundedYear")}
+              placeholder="e.g. 2019"
+            />
+          </label>
+        </div>
+
+        <div className="profile-card">
+          <div className="section-label">What you do</div>
+          <label className="field-label">
+            Description
+            <textarea
+              className="text-input profile-textarea"
+              rows={5}
+              value={form.description}
+              onChange={set("description")}
+            />
+          </label>
+          <label className="field-label">
+            Notes for the agent
+            <textarea
+              className="text-input profile-textarea"
+              rows={3}
+              value={form.notes}
+              onChange={set("notes")}
+              placeholder="Anything the agent should know or mention when pitching"
+            />
+          </label>
+        </div>
+
+        {business.offerings && business.offerings.length > 0 && (
+          <div className="profile-card profile-card-full">
+            <div className="section-label">Offerings (from your site)</div>
+            <div className="chip-row">
+              {business.offerings.map((o) => (
+                <span key={o} className="offering-chip">
+                  {o}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="profile-card profile-card-full">
+          <div className="button-row">
+            <button className="btn btn-primary" disabled={busy} onClick={() => void save()}>
+              {busy ? "Saving…" : "Save profile"}
+            </button>
+            {saved && <span className="saved-note">Saved ✓</span>}
+            <span className="profile-meta">
+              {business.scrapedAt ? `Site read ${formatWhen(business.scrapedAt)}` : ""}
+              {business.lastScanAt ? ` · last scan ${formatWhen(business.lastScanAt)}` : ""}
+            </span>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ------------------------------------------------------------- dashboard
 
 function InboxBanner() {
@@ -402,7 +591,7 @@ function ThreadView({
   );
 }
 
-function DraftEditor({ lead, outreach, onSent }: { lead: LeadDoc; outreach: OutreachDoc; onSent?: () => void }) {
+function DraftEditor({ lead, outreach }: { lead: LeadDoc; outreach: OutreachDoc }) {
   const updateDraft = useMutation(api.outreach.updateDraft);
   const approve = useMutation(api.leads.approve);
   const [subject, setSubject] = useState(outreach.subject ?? "");
@@ -439,7 +628,6 @@ function DraftEditor({ lead, outreach, onSent }: { lead: LeadDoc; outreach: Outr
             try {
               if (dirty) await updateDraft({ leadId: lead._id, subject, draftText: body });
               await approve({ leadId: lead._id });
-              onSent?.();
             } catch (err) {
               setNote(err instanceof Error ? err.message : String(err));
             } finally {
@@ -544,7 +732,7 @@ function LeadModal({
                 </div>
               )}
               {outreach && outreach.draftStatus === "failed" && outreach.sentAt === undefined && (
-                <div className="error-banner">Draft generation failed — see the Activity tab.</div>
+                <div className="error-banner">Draft generation failed — see the Activity page.</div>
               )}
               {!lead.contactEmail && (
                 <div className="muted-note">
@@ -801,20 +989,16 @@ function SettingsPanel({ business }: { business: BusinessDoc }) {
   );
 }
 
-const TABS: { key: LeadDoc["type"] | "activity"; label: string }[] = [
-  { key: "customer", label: "Customers" },
-  { key: "competitor", label: "Competitors" },
-  { key: "complement", label: "Complements" },
-  { key: "office", label: "Offices" },
-  { key: "event", label: "Events" },
-  { key: "activity", label: "Activity" },
-];
-
-function Dashboard({ business }: { business: BusinessDoc }) {
-  const rows = useQuery(api.leads.list, { businessId: business._id }) ?? [];
+function LeadPage({
+  business,
+  rows,
+  type,
+}: {
+  business: BusinessDoc;
+  rows: LeadRow[];
+  type: LeadDoc["type"];
+}) {
   const approveAll = useMutation(api.leads.approveAll);
-  const [tab, setTab] = useState<LeadDoc["type"] | "activity">("competitor");
-  const [showSettings, setShowSettings] = useState(false);
   const [openLeadId, setOpenLeadId] = useState<Id<"leads"> | null>(null);
   const [approvingAll, setApprovingAll] = useState(false);
   const now = useNowTick();
@@ -827,27 +1011,24 @@ function Dashboard({ business }: { business: BusinessDoc }) {
       r.outreach.sentAt === undefined,
   ).length;
 
-  const tabRows = (type: LeadDoc["type"]) =>
-    rows.filter((r) => r.lead.type === type).sort((a, b) => (b.lead.score ?? 0) - (a.lead.score ?? 0));
-
-  const countFor = (key: LeadDoc["type"] | "activity") =>
-    key === "activity" ? null : rows.filter((r) => r.lead.type === key).length;
+  const pageRows = rows
+    .filter((r) => r.lead.type === type)
+    .sort((a, b) => (b.lead.score ?? 0) - (a.lead.score ?? 0));
 
   const openRow = openLeadId ? (rows.find((r) => r.lead._id === openLeadId) ?? null) : null;
+  const label = LEAD_NAV.find((t) => t.key === type)?.label ?? type;
 
   return (
     <>
-      <div className="dash-head">
-        <div>
-          <h2 className="dash-title">{business.name ?? business.url}</h2>
-          {business.address && <div className="dash-sub">{business.address}</div>}
-        </div>
-        <button className="btn btn-secondary btn-sm" onClick={() => setShowSettings((s) => !s)}>
-          {showSettings ? "Close settings" : "Settings"}
-        </button>
+      <div className="page-head">
+        <h2 className="page-title">{label}</h2>
+        <span className="page-sub">
+          {business.name ?? business.url}
+          {business.address ? ` · ${business.address}` : ""}
+        </span>
       </div>
 
-      {showSettings && <SettingsPanel business={business} />}
+      <InboxBanner />
 
       {business.status === "sourcing" && (
         <div className="notice notice-scan">
@@ -881,41 +1062,19 @@ function Dashboard({ business }: { business: BusinessDoc }) {
         </div>
       )}
 
-      <nav className="tabs">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            className={`tab ${tab === t.key ? "tab-active" : ""}`}
-            onClick={() => setTab(t.key)}
-          >
-            {t.label}
-            {countFor(t.key) !== null && <span className="tab-count">{countFor(t.key)}</span>}
-          </button>
-        ))}
-      </nav>
-
-      <main>
-        {tab === "activity" ? (
-          <ActivityFeed businessId={business._id} />
-        ) : tabRows(tab).length === 0 ? (
-          <p className="empty-note">
-            {business.status === "sourcing"
-              ? "Nothing judged in this category yet — watch the Activity tab."
-              : "No leads in this category yet. Try a rescan from Settings."}
-          </p>
-        ) : (
-          <ul className="lead-list">
-            {tabRows(tab).map((row) => (
-              <LeadCard
-                key={row.lead._id}
-                row={row}
-                now={now}
-                onOpen={() => setOpenLeadId(row.lead._id)}
-              />
-            ))}
-          </ul>
-        )}
-      </main>
+      {pageRows.length === 0 ? (
+        <p className="empty-note">
+          {business.status === "sourcing"
+            ? "Nothing judged in this category yet — watch the Activity page."
+            : "No leads in this category yet. Try a rescan from Settings."}
+        </p>
+      ) : (
+        <ul className="lead-list">
+          {pageRows.map((row) => (
+            <LeadCard key={row.lead._id} row={row} now={now} onOpen={() => setOpenLeadId(row.lead._id)} />
+          ))}
+        </ul>
+      )}
 
       {openRow && (
         <LeadModal
@@ -936,17 +1095,67 @@ function Root() {
   const businesses = useQuery(api.businesses.list);
   const [selectedId, setSelectedId] = useState<Id<"businesses"> | null>(null);
   const [adding, setAdding] = useState(false);
+  const [page, setPage] = useState<Page>("customer");
+
+  const selected =
+    businesses?.find((b) => b._id === selectedId) ?? (businesses ? businesses[0] : null) ?? null;
+  const active = selected && (selected.status === "sourcing" || selected.status === "ready");
+  const rows = useQuery(api.leads.list, active ? { businessId: selected._id } : "skip");
 
   if (isLoading) return null;
   if (!isAuthenticated) return <SignInForm />;
   if (businesses === undefined || businesses === null) return null;
 
-  const selected = businesses.find((b) => b._id === selectedId) ?? businesses[0] ?? null;
   const showOnboarding = adding || businesses.length === 0;
 
+  let content: ReactNode;
+  if (showOnboarding) {
+    content = (
+      <Onboarding
+        onCreated={(id) => {
+          setSelectedId(id);
+          setAdding(false);
+        }}
+        onCancel={businesses.length > 0 ? () => setAdding(false) : undefined}
+      />
+    );
+  } else if (!selected) {
+    content = null;
+  } else if (selected.status === "scraping") {
+    content = <ProgressPanel business={selected} title="Reading the site…" />;
+  } else if (selected.status === "confirm") {
+    content = <ConfirmCard business={selected} />;
+  } else if (selected.status === "failed") {
+    content = <FailedCard business={selected} />;
+  } else if (page === "profile") {
+    content = <ProfilePage key={selected._id} business={selected} />;
+  } else if (page === "settings") {
+    content = (
+      <>
+        <div className="page-head">
+          <h2 className="page-title">Settings</h2>
+          <span className="page-sub">{selected.name ?? selected.url}</span>
+        </div>
+        <SettingsPanel business={selected} />
+      </>
+    );
+  } else if (page === "activity") {
+    content = (
+      <>
+        <div className="page-head">
+          <h2 className="page-title">Activity</h2>
+          <span className="page-sub">Live log of everything the agent does</span>
+        </div>
+        <ActivityFeed businessId={selected._id} />
+      </>
+    );
+  } else {
+    content = <LeadPage business={selected} rows={rows ?? []} type={page} />;
+  }
+
   return (
-    <div className="app-shell">
-      <TopBar
+    <div className="layout">
+      <Sidebar
         businesses={businesses}
         selectedId={selected?._id ?? null}
         onSelect={(id) => {
@@ -954,29 +1163,16 @@ function Root() {
           setAdding(false);
         }}
         onAdd={() => setAdding(true)}
+        page={page}
+        setPage={(p) => {
+          setPage(p);
+          setAdding(false);
+        }}
+        rows={rows ?? undefined}
       />
-      <div className="app-content">
-        {showOnboarding ? (
-          <Onboarding
-            onCreated={(id) => {
-              setSelectedId(id);
-              setAdding(false);
-            }}
-            onCancel={businesses.length > 0 ? () => setAdding(false) : undefined}
-          />
-        ) : selected === null ? null : selected.status === "scraping" ? (
-          <ProgressPanel business={selected} title="Reading the site…" />
-        ) : selected.status === "confirm" ? (
-          <ConfirmCard business={selected} />
-        ) : selected.status === "failed" ? (
-          <FailedCard business={selected} />
-        ) : (
-          <>
-            <InboxBanner />
-            <Dashboard business={selected} />
-          </>
-        )}
-      </div>
+      <main className="main">
+        <div className="main-inner">{content}</div>
+      </main>
     </div>
   );
 }

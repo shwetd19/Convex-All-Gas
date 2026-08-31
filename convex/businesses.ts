@@ -117,6 +117,29 @@ export const remove = mutation({
   },
 });
 
+// Profile page: owner-editable business details. Everything here also
+// flows into the agent's outreach prompts.
+export const updateProfile = mutation({
+  args: {
+    businessId: v.id("businesses"),
+    name: v.optional(v.string()),
+    category: v.optional(v.string()),
+    description: v.optional(v.string()),
+    teamSize: v.optional(v.string()),
+    domain: v.optional(v.string()),
+    foundedYear: v.optional(v.string()),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, { businessId, ...fields }) => {
+    await requireOwnedBusiness(ctx, businessId);
+    const patch: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(fields)) {
+      if (value !== undefined) patch[key] = value.trim();
+    }
+    await ctx.db.patch(businessId, patch);
+  },
+});
+
 export const updateSettings = mutation({
   args: {
     businessId: v.id("businesses"),
