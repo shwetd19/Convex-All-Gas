@@ -854,8 +854,8 @@ function LeadModal({
                       {replyBusy ? "Sending…" : "Send reply"}
                     </button>
                     <span className="muted-note">
-                      Sends from the agent inbox. If you don't answer a new reply within an
-                      hour, the agent replies for you.
+                      Sends from the agent inbox into this thread. (With auto-reply enabled in
+                      Settings, the agent answers for you after 1 quiet hour.)
                     </span>
                   </div>
                 </div>
@@ -1063,10 +1063,11 @@ function SettingsPanel({ business }: { business: BusinessDoc }) {
         <label className="check-label">
           <input
             type="checkbox"
-            checked={business.autoReply !== false}
+            checked={business.autoReply === true}
             onChange={(e) => void updateSettings({ businessId, autoReply: e.target.checked })}
           />
-          Agent auto-replies to responses
+          Auto-reply for me: if I don't answer a reply within 1 hour, the agent responds on my
+          behalf (off by default)
         </label>
       </div>
       <div className="settings-footer">

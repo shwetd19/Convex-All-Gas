@@ -760,6 +760,7 @@ ${text.slice(0, 4000)}
     const label = CLASSIFICATION_TEXT[classification];
 
     // Notify the owner at their signup address, right away.
+    const autoReplyOn = business.autoReply === true;
     try {
       const owner = await ctx.runQuery(internal.users.getById, { userId: business.userId });
       if (owner?.email && outreach.inboxId) {
@@ -772,7 +773,11 @@ Their reply:
 Open Block to read the thread and respond:
 ${siteUrl}
 
-If you don't respond within 1 hour, your agent will reply on your behalf automatically${business.autoReply === false ? " (currently turned OFF in Settings)" : ""}.`;
+${
+  autoReplyOn
+    ? "If you don't respond within 1 hour, your agent will reply on your behalf automatically (you opted in to auto-reply)."
+    : "Your agent will not reply on its own — auto-reply is off. Enable it in Settings if you want hands-off handling."
+}`;
         await agentmailApiFetch(`/inboxes/${encodeURIComponent(outreach.inboxId)}/messages/send`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -788,8 +793,9 @@ If you don't respond within 1 hour, your agent will reply on your behalf automat
       console.error("Owner notification failed", err);
     }
 
-    // Grace window, then the agent answers — unless the owner already did.
-    if (business.autoReply !== false && outreach.inboxId) {
+    // Grace window, then the agent answers — only if the owner opted in,
+    // and never if the owner already answered.
+    if (autoReplyOn && outreach.inboxId) {
       await ctx.scheduler.runAfter(AUTO_REPLY_DELAY_MS, internal.pipeline.sendAutoReply, {
         outreachId,
         messageRowId,
@@ -812,7 +818,7 @@ export const sendAutoReply = internalAction({
     if (
       !outreach ||
       !business ||
-      business.autoReply === false ||
+      business.autoReply !== true || // opt-in only — re-checked at fire time
       !outreach.inboxId ||
       !messageRow?.agentmailMessageId
     ) {

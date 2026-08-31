@@ -2,6 +2,21 @@ import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 
+// One-shot ops utility for the auto-reply opt-in change: flip every
+// existing business to the new off-by-default. Run via `npx convex run`.
+export const disableAutoReplyEverywhere = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const businesses = await ctx.db.query("businesses").take(200);
+    for (const business of businesses) {
+      if (business.autoReply !== false) {
+        await ctx.db.patch(business._id, { autoReply: false });
+      }
+    }
+    return businesses.length;
+  },
+});
+
 // Test/ops utility: point a lead's outreach at a different address (e.g.
 // your own inbox to test the send → reply → auto-reply loop end to end).
 // Internal only — run via `npx convex run`.

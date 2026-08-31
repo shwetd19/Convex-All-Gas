@@ -39,7 +39,9 @@ export const create = mutation({
       approvalMode: "approve_each",
       followUpDelayDays: 2,
       weeklyRescan: true,
-      autoReply: true,
+      // The agent answering real third parties unsupervised is an explicit
+      // opt-in — the owner chooses how much autonomy to hand over.
+      autoReply: false,
     });
     await ctx.scheduler.runAfter(0, internal.pipeline.intakeBusiness, { businessId });
     return businessId;
