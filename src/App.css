@@ -722,6 +722,12 @@ a {
   border: 1px solid var(--amber-border);
 }
 
+.type-customer {
+  background: #f4ebff;
+  color: #6941c6;
+  border: 1px solid #d6bbfb;
+}
+
 .badge-sourced {
   background: var(--surface-2);
   color: var(--text-2);

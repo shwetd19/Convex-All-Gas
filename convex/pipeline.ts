@@ -21,6 +21,7 @@ const MODEL = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
 const RADIUS_METERS = 1200;
 const NEARBY_CAP = 10;
 const OFFICE_CAP = 4;
+const CUSTOMER_CAP = 5;
 const EVENT_PICKS = 3;
 
 // Per-company scan budget: everything one scan schedules must run within
@@ -198,8 +199,32 @@ export const sourceLeads = internalAction({
         console.error("Office search failed", err);
       }
 
+      // Customer branch: OpenAI names the ideal nearby customer profile
+      // from the business's own offerings, Google Places grounds it to
+      // real organizations — never invented names.
+      let customers: Place[] = [];
+      try {
+        const q = await askJson(
+          "You write ONE Google Places text-search query that finds nearby organizations likely to BUY from a given business (its B2B customer prospects). Respond with strict JSON only.",
+          `Business:
+${businessProfileText(business)}
+
+Respond with JSON: {"query": string} — a short, concrete Places search near the business's area, e.g. "startups and software companies near Baner Pune" for an IT services firm, or "corporate offices and event venues near <area>" for a caterer. Ground it in what this business actually sells.`,
+        );
+        if (typeof q.query === "string" && q.query.trim()) {
+          customers = await searchTextPlaces(q.query.trim(), {
+            lat: business.lat,
+            lng: business.lng,
+            radiusMeters: 3000,
+            maxResultCount: 8,
+          });
+        }
+      } catch (err) {
+        console.error("Customer search failed", err);
+      }
+
       const seen = new Set<string>(business.placeId ? [business.placeId] : []);
-      const candidates: { place: Place; bucket: "place" | "office" }[] = [];
+      const candidates: { place: Place; bucket: "place" | "office" | "customer" }[] = [];
       for (const place of nearby) {
         if (seen.has(place.placeId) || candidates.length >= NEARBY_CAP) continue;
         seen.add(place.placeId);
@@ -211,6 +236,13 @@ export const sourceLeads = internalAction({
         seen.add(place.placeId);
         candidates.push({ place, bucket: "office" });
         officeCount += 1;
+      }
+      let customerCount = 0;
+      for (const place of customers) {
+        if (seen.has(place.placeId) || customerCount >= CUSTOMER_CAP) continue;
+        seen.add(place.placeId);
+        candidates.push({ place, bucket: "customer" });
+        customerCount += 1;
       }
 
       await log(`Found ${candidates.length} nearby places…`);
@@ -258,7 +290,7 @@ export const sourceLeads = internalAction({
 export const enrichCandidate = internalAction({
   args: {
     businessId: v.id("businesses"),
-    bucket: v.union(v.literal("place"), v.literal("office")),
+    bucket: v.union(v.literal("place"), v.literal("office"), v.literal("customer")),
     name: v.string(),
     placeId: v.string(),
     address: v.optional(v.string()),
@@ -300,17 +332,18 @@ Address: ${address ?? "unknown"}
 Google categories: ${(types ?? []).join(", ") || "unknown"}
 ${content ? `Their website content (markdown, truncated):\n${content}` : "No website content available — judge from name and categories only, conservatively."}
 ${bucket === "office" ? "\nThis candidate came from an offices/coworking search: if it's a real office, coworking space, or company HQ, verdict should be \"office\" (they're a bulk-order / catering / perks pitch target), else \"skip\"." : ""}
+${bucket === "customer" ? '\nThis candidate came from a customer-prospect search: if they would plausibly BUY what my business sells, verdict should be "customer", else "skip".' : ""}
 
 Respond with JSON exactly matching:
-{"verdict": "competitor" | "complement" | "office" | "skip", "relevanceNote": string, "evidence": string, "score": number}
+{"verdict": "competitor" | "complement" | "office" | "customer" | "skip", "relevanceNote": string, "evidence": string, "score": number}
 
-- "verdict": competitor = sells substantially the same thing to the same customers; complement = adjacent offering with cross-promo potential; office = workplace worth pitching; skip = irrelevant or too weak to pitch.
+- "verdict": competitor = sells substantially the same thing to the same customers; complement = adjacent offering with cross-promo potential; office = workplace worth pitching; customer = an organization that would plausibly buy what my business sells; skip = irrelevant or too weak to pitch.
 - "relevanceNote": ONE short sentence on why this is worth pitching (a gap, an overlap, a concrete opportunity — e.g. "closed Sundays, you're open"). For skip, why not.
 - "evidence": a short concrete fact/quote from their content backing the note ("" if none).
 - "score": 0-100 how worth pitching this lead is.`,
       );
 
-      const verdicts = ["competitor", "complement", "office"];
+      const verdicts = ["competitor", "complement", "office", "customer"];
       const verdict = verdicts.includes(judged.verdict) ? judged.verdict : "skip";
       const score = typeof judged.score === "number" ? judged.score : 0;
       if (verdict === "skip" || score < 35) {
@@ -466,7 +499,7 @@ Evidence from their site: ${lead.evidence ?? "n/a"}
 
 Write the email. Respond with JSON: {"subject": string, "body": string}
 - subject: under 60 characters, concrete, no clickbait.
-- body: 90-140 words. Open with the specific real detail from the research (never "I hope this finds you well"). Propose ONE concrete idea that fits a ${lead.type} (e.g. cross-promo, bundle, referral swap, event booth/catering, office perk or bulk order). End with a low-friction ask (a short reply or 15-minute chat). Sign off with "${business.name ?? "the owner"}".`,
+- body: 90-140 words. Open with the specific real detail from the research (never "I hope this finds you well"). Propose ONE concrete idea that fits a ${lead.type} (e.g. cross-promo, bundle, referral swap, event booth/catering, office perk or bulk order — or, for a customer prospect, a specific first offer of your product/service tailored to what they do). End with a low-friction ask (a short reply or 15-minute chat). Sign off with "${business.name ?? "the owner"}".`,
       );
       if (typeof draft.subject !== "string" || typeof draft.body !== "string") {
         throw new Error("Draft generation returned an unexpected shape");

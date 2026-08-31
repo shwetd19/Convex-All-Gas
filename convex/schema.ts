@@ -7,6 +7,8 @@ export const leadTypeValidator = v.union(
   v.literal("complement"),
   v.literal("office"),
   v.literal("event"),
+  // A nearby organization likely to BUY from this business (B2B prospect).
+  v.literal("customer"),
 );
 
 // The lead lifecycle from PLAN.md, plus "skipped" (user said no) and "won".

@@ -18,6 +18,7 @@ const TYPE_LABEL: Record<LeadDoc["type"], string> = {
   complement: "Complement",
   office: "Office",
   event: "Event",
+  customer: "Customer",
 };
 
 const STATUS_LABEL: Record<LeadDoc["status"], string> = {
@@ -801,6 +802,7 @@ function SettingsPanel({ business }: { business: BusinessDoc }) {
 }
 
 const TABS: { key: LeadDoc["type"] | "activity"; label: string }[] = [
+  { key: "customer", label: "Customers" },
   { key: "competitor", label: "Competitors" },
   { key: "complement", label: "Complements" },
   { key: "office", label: "Offices" },
