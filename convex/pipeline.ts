@@ -43,12 +43,30 @@ async function askJson(system: string, user: string): Promise<any> {
   return JSON.parse(completion.choices[0]?.message?.content ?? "{}");
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Firecrawl's free tier caps requests per minute, and its 429s say how long
+// to wait ("please retry after 4s"). Honor that instead of failing the
+// candidate — a scan fans out over many scrapes and will brush the cap.
 async function scrapeMarkdown(ctx: ActionCtx, url: string): Promise<string> {
-  const page: any = await firecrawl.scrape(ctx, url, {
-    formats: ["markdown"],
-    onlyMainContent: true,
-  });
-  return ((page?.markdown ?? "") as string).toString();
+  const ATTEMPTS = 4;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const page: any = await firecrawl.scrape(ctx, url, {
+        formats: ["markdown"],
+        onlyMainContent: true,
+      });
+      return ((page?.markdown ?? "") as string).toString();
+    } catch (err) {
+      const message = errMessage(err);
+      const rateLimited = message.includes("429") || /rate limit/i.test(message);
+      if (!rateLimited || attempt >= ATTEMPTS) throw err;
+      const hinted = message.match(/retry after (\d+)s/i);
+      const waitMs = Math.min(30_000, (hinted ? Number(hinted[1]) + 2 : 8 * attempt) * 1000);
+      console.log(`Firecrawl rate limited, retrying ${url} in ${waitMs}ms (attempt ${attempt})`);
+      await sleep(waitMs);
+    }
+  }
 }
 
 function errMessage(err: unknown): string {
@@ -193,10 +211,12 @@ export const sourceLeads = internalAction({
       await log("Judging competitors vs. complements from what they actually sell…");
 
       // Staggered fan-out: each candidate is scraped + judged on its own,
-      // so leads stream onto the dashboard as they're decided.
+      // so leads stream onto the dashboard as they're decided. 10s apart —
+      // each candidate can cost up to two Firecrawl calls, and the free
+      // tier caps requests per minute (saw 429s at ~1.5s spacing).
       for (let i = 0; i < candidates.length; i++) {
         const { place, bucket } = candidates[i];
-        await ctx.scheduler.runAfter(i * 1500, internal.pipeline.enrichCandidate, {
+        await ctx.scheduler.runAfter(i * 10_000, internal.pipeline.enrichCandidate, {
           businessId,
           bucket,
           name: place.name,
@@ -207,7 +227,13 @@ export const sourceLeads = internalAction({
         });
       }
 
-      await ctx.scheduler.runAfter(0, internal.pipeline.sourceEvents, { businessId });
+      // Events run their own search + up to 3 page scrapes — start them
+      // after the candidate fan-out has thinned out.
+      await ctx.scheduler.runAfter(
+        (candidates.length + 1) * 10_000,
+        internal.pipeline.sourceEvents,
+        { businessId },
+      );
       await ctx.runMutation(internal.businesses.markScanned, { businessId });
     } catch (err) {
       const message = errMessage(err);
