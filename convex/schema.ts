@@ -2,125 +2,139 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { authTables } from "@convex-dev/auth/server";
 
-export const categoryValidator = v.union(
-  v.literal("jobs"),
-  v.literal("flats"),
-  v.literal("newsletter"),
-  v.literal("other"),
+export const leadTypeValidator = v.union(
+  v.literal("competitor"),
+  v.literal("complement"),
+  v.literal("office"),
+  v.literal("event"),
+);
+
+// The lead lifecycle from PLAN.md, plus "skipped" (user said no) and "won".
+export const leadStatusValidator = v.union(
+  v.literal("sourced"),
+  v.literal("approved"),
+  v.literal("outreach_sent"),
+  v.literal("replied"),
+  v.literal("followed_up"),
+  v.literal("cold"),
+  v.literal("won"),
+  v.literal("skipped"),
+);
+
+export const replyClassificationValidator = v.union(
+  v.literal("interested"),
+  v.literal("not_interested"),
+  v.literal("needs_info"),
 );
 
 export default defineSchema({
   ...authTables,
 
-  // Single-row cache of the demo inbox, discovered/created via the AgentMail
-  // component. Kept in our own table rather than the component's (its
-  // inbox cache isn't part of the component's public typed API).
+  // Single-row cache of the app's AgentMail inbox. All outreach sends from
+  // this dedicated inbox — never the user's personal one (see PLAN.md
+  // guardrails). Carried over unchanged from the previous app.
   appInbox: defineTable({
     inboxId: v.string(),
     email: v.string(),
     displayName: v.optional(v.string()),
   }),
 
-  // One row per inbound forward we've processed. No auth for the MVP —
-  // everything keyed by the inbox address that received the mail.
-  emails: defineTable({
-    agentmailMessageId: v.string(),
-    agentmailThreadId: v.string(),
-    inboxId: v.string(),
-    from: v.string(),
-    subject: v.optional(v.string()),
-    receivedAt: v.number(),
-    preferenceNote: v.optional(v.string()),
-    // True when this was a reply in a digest thread ("skip #2") rather
-    // than a forward with links — handled by convex/feedback.ts, hidden
-    // from the forwards list on the dashboard.
-    isFeedback: v.optional(v.boolean()),
-  })
-    .index("by_thread", ["agentmailThreadId"])
-    .index("by_agentmail_message", ["agentmailMessageId"]),
-
-  listings: defineTable({
-    emailId: v.id("emails"),
+  // One business per account (v1). Holds the scraped/resolved profile and
+  // the user's settings. Status drives the onboarding flow:
+  // scraping → confirm ("Is this you?") → sourcing → ready.
+  businesses: defineTable({
+    userId: v.id("users"),
     url: v.string(),
+    name: v.optional(v.string()),
+    description: v.optional(v.string()),
+    offerings: v.optional(v.array(v.string())),
+    category: v.optional(v.string()),
+    address: v.optional(v.string()),
+    placeId: v.optional(v.string()),
+    lat: v.optional(v.number()),
+    lng: v.optional(v.number()),
     status: v.union(
-      v.literal("pending"),
       v.literal("scraping"),
-      v.literal("scraped"),
-      v.literal("ranked"),
+      v.literal("confirm"),
+      v.literal("sourcing"),
+      v.literal("ready"),
       v.literal("failed"),
     ),
-    rawMarkdown: v.optional(v.string()),
-    fields: v.optional(
-      v.object({
-        title: v.optional(v.string()),
-        price: v.optional(v.string()),
-        bedrooms: v.optional(v.string()),
-        location: v.optional(v.string()),
-        summary: v.optional(v.string()),
-      }),
-    ),
-    score: v.optional(v.number()),
-    scoreReason: v.optional(v.string()),
     error: v.optional(v.string()),
-    // Set once this listing has been included in a sent digest — replaces
-    // the old per-email digestSentAt now that digests batch across emails.
-    digestedAt: v.optional(v.number()),
-    // LLM-classified during extraction; used to group the digest and to
-    // scope a "jobs now" / "flats now" immediate request to one category.
-    category: v.optional(categoryValidator),
+    scrapedAt: v.optional(v.number()),
+    lastScanAt: v.optional(v.number()),
+    // Settings (dashboard spec): approve-each is the demo-safe default.
+    approvalMode: v.union(v.literal("approve_each"), v.literal("auto_send")),
+    followUpDelayDays: v.number(),
+    weeklyRescan: v.boolean(),
+  }).index("by_userId", ["userId"]),
+
+  // One row per sourced contact — the standing job, not a one-shot.
+  leads: defineTable({
+    businessId: v.id("businesses"),
+    type: leadTypeValidator,
+    name: v.string(),
+    address: v.optional(v.string()),
+    url: v.optional(v.string()),
+    placeId: v.optional(v.string()),
+    sourceUrl: v.optional(v.string()),
+    contactEmail: v.optional(v.string()),
+    relevanceNote: v.optional(v.string()),
+    // The scraped snippet that justified including them — shown as
+    // sourcing evidence in the lead detail view.
+    evidence: v.optional(v.string()),
+    score: v.optional(v.number()),
+    status: leadStatusValidator,
   })
-    .index("by_email", ["emailId"])
-    .index("by_status", ["status"]),
+    .index("by_businessId", ["businessId"])
+    .index("by_businessId_and_placeId", ["businessId", "placeId"]),
 
-  // One digest can cover listings pulled in from several forwarded emails
-  // (see convex/digest.ts), so it references listings directly rather than
-  // a single parent email.
-  digests: defineTable({
-    agentmailThreadId: v.string(),
-    listingIds: v.array(v.id("listings")),
-    // The ranked listings in the exact order they were numbered in the
-    // email body, so a reply like "skip #2" resolves to a listing.
-    // Optional only for digests sent before replies were supported.
-    rankedListingIds: v.optional(v.array(v.id("listings"))),
-    body: v.string(),
-    listingCount: v.number(),
+  // The outreach state machine for one lead: draft → sent → (reply |
+  // follow-up → cold). nextActionAt is when the follow-up cron should act
+  // (send the one follow-up, or mark cold after it) — cleared on reply.
+  outreach: defineTable({
+    leadId: v.id("leads"),
+    businessId: v.id("businesses"),
+    inboxId: v.optional(v.string()),
+    subject: v.optional(v.string()),
+    draftText: v.optional(v.string()),
+    draftStatus: v.union(v.literal("generating"), v.literal("ready"), v.literal("failed")),
+    agentmailThreadId: v.optional(v.string()),
+    agentmailMessageId: v.optional(v.string()),
+    sentAt: v.optional(v.number()),
+    followUpSentAt: v.optional(v.number()),
+    nextActionAt: v.optional(v.number()),
+    lastReplyAt: v.optional(v.number()),
+    replyClassification: v.optional(replyClassificationValidator),
+  })
+    .index("by_leadId", ["leadId"])
+    .index("by_businessId", ["businessId"])
+    .index("by_agentmailThreadId", ["agentmailThreadId"])
+    .index("by_nextActionAt", ["nextActionAt"]),
+
+  // Every message in a lead's thread, for the compact inbox view in the
+  // lead detail — outbound initial/follow-up and inbound replies.
+  messages: defineTable({
+    outreachId: v.id("outreach"),
+    businessId: v.id("businesses"),
+    direction: v.union(v.literal("outbound"), v.literal("inbound")),
+    kind: v.union(v.literal("initial"), v.literal("follow_up"), v.literal("reply")),
+    subject: v.optional(v.string()),
+    text: v.string(),
+    from: v.optional(v.string()),
+    classification: v.optional(replyClassificationValidator),
+    agentmailMessageId: v.optional(v.string()),
     sentAt: v.number(),
-  }).index("by_thread", ["agentmailThreadId"]),
+  })
+    .index("by_outreachId", ["outreachId"])
+    .index("by_agentmailMessageId", ["agentmailMessageId"]),
 
-  // Steering signals a user sent by replying to a digest ("skip #2",
-  // "more like #3"). Read by convex/ai.ts's extractAndScore so future
-  // batches are scored with the user's past reactions in the prompt.
-  feedback: defineTable({
-    ownerEmail: v.string(),
-    kind: v.union(v.literal("skip"), v.literal("more"), v.literal("less")),
-    listingId: v.id("listings"),
-    url: v.string(),
-    domain: v.string(),
-    title: v.optional(v.string()),
-    summary: v.optional(v.string()),
-    digestId: v.id("digests"),
-    createdAt: v.number(),
-  }).index("by_owner", ["ownerEmail"]),
-
-  // One row per forwarder (keyed by the lowercased address they forward
-  // from — see convex/lib/parseFrom.ts) tracking their own debounced digest
-  // send: every new forward from that address pushes their scheduled send
-  // time out, so a burst of forwards from one person only fires one send,
-  // and two people sharing the inbox never get their listings mixed into
-  // each other's digest. ownerEmail is optional only because one row
-  // predates this per-owner design (from when there was a single global
-  // schedule) — it's permanently orphaned, never matched by a by_owner
-  // query, and harmless to leave in place.
-  digestSchedule: defineTable({
-    ownerEmail: v.optional(v.string()),
-    scheduledFunctionId: v.optional(v.id("_scheduled_functions")),
-    scheduledFor: v.optional(v.number()),
-    lastDigestAt: v.optional(v.number()),
-    // Set only on an explicit "digest now" request — sendDigest replies to
-    // this email specifically, even with nothing else pending.
-    requestedByEmailId: v.optional(v.id("emails")),
-    // Set only when the "now" request named a category ("jobs now") —
-    // scopes that immediate send to just this category.
-    requestedCategory: v.optional(categoryValidator),
-  }).index("by_owner", ["ownerEmail"]),
+  // Timestamped log per business — the live "watch the agent work" feed
+  // (sourced → drafted → sent → replied). Ordered by _creationTime.
+  activity: defineTable({
+    businessId: v.id("businesses"),
+    leadId: v.optional(v.id("leads")),
+    kind: v.string(), // "sourcing" | "draft" | "sent" | "reply" | "follow_up" | "system"
+    message: v.string(),
+  }).index("by_businessId", ["businessId"]),
 });

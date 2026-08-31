@@ -2,8 +2,8 @@ import { v } from "convex/values";
 import { internalAction, internalMutation } from "./_generated/server";
 import { internal, components } from "./_generated/api";
 import { AgentMail } from "@agentmail/convex";
-import { extractListingUrls, extractPreferenceNote, parseDigestCommand } from "./lib/extractUrls";
 import { extractEmailAddress } from "./lib/parseFrom";
+import { extractReplyText, htmlToText } from "./lib/text";
 import { fetchMessage } from "./lib/agentmailRest";
 
 // Shared AgentMail handle: configured with the hook AgentMail calls on every
@@ -11,36 +11,22 @@ import { fetchMessage } from "./lib/agentmailRest";
 // through the same config.
 //
 // Explicit type annotation breaks a circularity: `internal.email.*` is
-// generated from this file's own exports, so inferring `agentmail`'s type
-// from an expression that references `internal.email.onMessageReceived`
-// would otherwise depend on itself.
+// generated from this file's own exports.
 export const agentmail: AgentMail = new AgentMail(components.agentmail, {
   onMessageReceived: internal.email.onMessageReceived,
 });
 
-function toMillis(value: unknown): number {
-  if (typeof value === "number") return value;
-  if (typeof value === "string") {
-    const parsed = Date.parse(value);
-    if (!Number.isNaN(parsed)) return parsed;
-  }
-  return Date.now();
-}
-
-const ingestArgs = {
-  messageId: v.string(),
-  threadId: v.string(),
+const replyMeta = {
+  outreachId: v.id("outreach"),
+  agentmailMessageId: v.string(),
   inboxId: v.string(),
   from: v.string(),
   subject: v.optional(v.string()),
-  receivedAt: v.number(),
 };
 
-// Webhook entry point. AgentMail includes text/html in the event for small
-// messages only; past a size threshold it sends a body_url instead and no
-// body at all. A job-alert forward is easily 50-70 KB of HTML, so treating
-// a missing body as an empty email silently ingested nothing. When the body
-// isn't in the event, fetch the full message over REST first, then ingest.
+// Webhook entry point. An inbound message in a thread we sent outreach in
+// is a reply from that lead — record it and classify it. Anything else
+// (spam, mail in unknown threads) is ignored.
 export const onMessageReceived = internalMutation({
   args: { message: v.any(), thread: v.any(), eventId: v.string() },
   handler: async (ctx, args) => {
@@ -50,109 +36,103 @@ export const onMessageReceived = internalMutation({
     const inboxId = (message.inbox_id ?? message.inboxId) as string | undefined;
     if (!messageId || !threadId || !inboxId) return;
 
+    const from = ((message.from ?? message.from_) as string) ?? "unknown";
+
+    // Our own outbound mail can echo back through the webhook — skip it.
+    const appInbox = await ctx.db.query("appInbox").first();
+    if (appInbox && extractEmailAddress(from) === appInbox.email.toLowerCase()) return;
+
+    const outreach = await ctx.db
+      .query("outreach")
+      .withIndex("by_agentmailThreadId", (q) => q.eq("agentmailThreadId", threadId))
+      .first();
+    if (!outreach) {
+      console.log("Inbound message in unknown thread, ignoring", threadId);
+      return;
+    }
+
     const meta = {
-      messageId,
-      threadId,
+      outreachId: outreach._id,
+      agentmailMessageId: messageId,
       inboxId,
-      from: ((message.from ?? message.from_) as string) ?? "unknown",
+      from,
       subject: message.subject as string | undefined,
-      receivedAt: toMillis(message.timestamp ?? message.created_at),
     };
     const text = ((message.text ?? "") as string).toString();
     const html = ((message.html ?? "") as string).toString();
 
+    // AgentMail omits the body for large messages (body_url instead) —
+    // fetch over REST first when it's missing, same fix as before.
     if (text || html) {
-      await ctx.runMutation(internal.email.ingest, { ...meta, text, html });
+      await ctx.runMutation(internal.email.recordReply, { ...meta, text, html });
     } else {
-      await ctx.scheduler.runAfter(0, internal.email.fetchBodyAndIngest, meta);
+      await ctx.scheduler.runAfter(0, internal.email.fetchBodyAndRecord, meta);
     }
   },
 });
 
-export const fetchBodyAndIngest = internalAction({
-  args: ingestArgs,
+export const fetchBodyAndRecord = internalAction({
+  args: replyMeta,
   handler: async (ctx, meta) => {
     let text = "";
     let html = "";
     try {
-      const full = await fetchMessage(meta.inboxId, meta.messageId);
+      const full = await fetchMessage(meta.inboxId, meta.agentmailMessageId);
       text = (full.text ?? "").toString();
       html = (full.html ?? "").toString();
     } catch (err) {
-      // Ingest anyway so the forward is visible on the dashboard as
-      // "no links found" rather than vanishing; the error is in the logs.
-      console.error("AgentMail body fetch failed", meta.messageId, err);
+      console.error("AgentMail body fetch failed", meta.agentmailMessageId, err);
     }
-    await ctx.runMutation(internal.email.ingest, { ...meta, text, html });
+    await ctx.runMutation(internal.email.recordReply, { ...meta, text, html });
   },
 });
 
-export const ingest = internalMutation({
-  args: { ...ingestArgs, text: v.string(), html: v.string() },
-  handler: async (ctx, { messageId, threadId, inboxId, from, subject, receivedAt, text, html }) => {
-    // AgentMail can redeliver webhooks; skip mail we've already ingested.
+export const recordReply = internalMutation({
+  args: { ...replyMeta, text: v.string(), html: v.string() },
+  handler: async (ctx, { outreachId, agentmailMessageId, from, subject, text, html }) => {
+    // Webhooks can redeliver — skip replies we've already recorded.
     const existing = await ctx.db
-      .query("emails")
-      .withIndex("by_agentmail_message", (q) => q.eq("agentmailMessageId", messageId))
-      .unique();
+      .query("messages")
+      .withIndex("by_agentmailMessageId", (q) => q.eq("agentmailMessageId", agentmailMessageId))
+      .first();
     if (existing) return;
 
-    // A reply in a thread we've already sent a digest in is steering
-    // ("skip #2", "more like #3"), not a new forward. It quotes the whole
-    // digest underneath, so we must NOT run URL extraction on it — that
-    // would re-ingest every link in the digest as a fresh listing.
-    const digest = await ctx.runQuery(internal.emails.getDigestByThread, {
-      agentmailThreadId: threadId,
-    });
-    if (digest) {
-      const emailId = await ctx.db.insert("emails", {
-        agentmailMessageId: messageId,
-        agentmailThreadId: threadId,
-        inboxId,
-        from,
-        subject,
-        receivedAt,
-        isFeedback: true,
-      });
-      await ctx.scheduler.runAfter(0, internal.ai.handleFeedbackReply, {
-        emailId,
-        digestId: digest._id,
-        text: text || html,
-      });
-      return;
-    }
+    const outreach = await ctx.db.get(outreachId);
+    if (!outreach) return;
+    const lead = await ctx.db.get(outreach.leadId);
 
-    const urls = extractListingUrls(text, html);
-    const preferenceNote = extractPreferenceNote(text || html);
+    const raw = text || htmlToText(html);
+    const replyText = extractReplyText(raw) || raw.slice(0, 4000);
+    const now = Date.now();
 
-    const emailId = await ctx.db.insert("emails", {
-      agentmailMessageId: messageId,
-      agentmailThreadId: threadId,
-      inboxId,
-      from,
+    const messageRowId = await ctx.db.insert("messages", {
+      outreachId,
+      businessId: outreach.businessId,
+      direction: "inbound",
+      kind: "reply",
       subject,
-      receivedAt,
-      preferenceNote,
+      text: replyText,
+      from,
+      agentmailMessageId,
+      sentAt: now,
     });
 
-    for (const url of urls) {
-      const listingId = await ctx.db.insert("listings", {
-        emailId,
-        url,
-        status: "pending",
-      });
-      await ctx.scheduler.runAfter(0, internal.listings.scrapeListing, { listingId });
+    // A reply cancels any pending follow-up / cold transition.
+    await ctx.db.patch(outreachId, { lastReplyAt: now, nextActionAt: undefined });
+    if (lead && lead.status !== "won") {
+      await ctx.db.patch(lead._id, { status: "replied" });
     }
+    await ctx.db.insert("activity", {
+      businessId: outreach.businessId,
+      leadId: outreach.leadId,
+      kind: "reply",
+      message: `Reply received from ${lead?.name ?? extractEmailAddress(from)}`,
+    });
 
-    // Every forward (even a "digest now" with no new links, or one whose
-    // listings haven't finished processing yet) reschedules the batched
-    // send for this forwarder specifically — see convex/digest.ts.
-    const { immediate, category } = parseDigestCommand(subject, preferenceNote);
-    await ctx.runMutation(internal.digest.scheduleDigest, {
-      ownerEmail: extractEmailAddress(from),
-      immediate,
-      requestedByEmailId: immediate ? emailId : undefined,
-      requestedCategory: immediate ? category : undefined,
+    await ctx.scheduler.runAfter(0, internal.pipeline.classifyReply, {
+      outreachId,
+      messageRowId,
+      text: replyText,
     });
   },
 });

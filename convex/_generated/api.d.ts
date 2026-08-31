@@ -8,21 +8,21 @@
  * @module
  */
 
-import type * as ai from "../ai.js";
+import type * as activity from "../activity.js";
 import type * as auth from "../auth.js";
+import type * as businesses from "../businesses.js";
 import type * as crons from "../crons.js";
-import type * as dashboard from "../dashboard.js";
-import type * as digest from "../digest.js";
 import type * as email from "../email.js";
-import type * as emails from "../emails.js";
-import type * as feedback from "../feedback.js";
 import type * as http from "../http.js";
 import type * as inbox from "../inbox.js";
+import type * as leads from "../leads.js";
 import type * as lib_agentmailRest from "../lib/agentmailRest.js";
-import type * as lib_extractUrls from "../lib/extractUrls.js";
 import type * as lib_parseFrom from "../lib/parseFrom.js";
-import type * as listings from "../listings.js";
+import type * as lib_places from "../lib/places.js";
+import type * as lib_text from "../lib/text.js";
 import type * as maintenance from "../maintenance.js";
+import type * as outreach from "../outreach.js";
+import type * as pipeline from "../pipeline.js";
 import type * as users from "../users.js";
 
 import type {
@@ -32,21 +32,21 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  ai: typeof ai;
+  activity: typeof activity;
   auth: typeof auth;
+  businesses: typeof businesses;
   crons: typeof crons;
-  dashboard: typeof dashboard;
-  digest: typeof digest;
   email: typeof email;
-  emails: typeof emails;
-  feedback: typeof feedback;
   http: typeof http;
   inbox: typeof inbox;
+  leads: typeof leads;
   "lib/agentmailRest": typeof lib_agentmailRest;
-  "lib/extractUrls": typeof lib_extractUrls;
   "lib/parseFrom": typeof lib_parseFrom;
-  listings: typeof listings;
+  "lib/places": typeof lib_places;
+  "lib/text": typeof lib_text;
   maintenance: typeof maintenance;
+  outreach: typeof outreach;
+  pipeline: typeof pipeline;
   users: typeof users;
 }>;
 

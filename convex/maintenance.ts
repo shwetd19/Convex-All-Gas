@@ -1,51 +1,63 @@
-import { v } from "convex/values";
-import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 
-// If a scrape or extraction call never resolves (crash, stuck promise), don't
-// let a listing block its digest forever. Anything still in-flight after
-// this long gets force-failed so the next digest goes out with whatever
-// ranked.
-const STALL_THRESHOLD_MS = 10 * 60 * 1000;
-
-export const findStuckListings = internalQuery({
+// Cron sweep over outreach rows whose nextActionAt has passed:
+// - reply came in → nothing to do (clear the marker)
+// - no reply, no follow-up yet → send the one follow-up
+// - no reply after the follow-up → mark the lead cold, stop (PLAN.md
+//   guardrail: one follow-up per lead, then stop)
+export const followUpSweep = internalMutation({
   args: {},
   handler: async (ctx) => {
-    const cutoff = Date.now() - STALL_THRESHOLD_MS;
-    const listings = await ctx.db.query("listings").collect();
-    return listings.filter(
-      (l) =>
-        (l.status === "pending" || l.status === "scraping" || l.status === "scraped") &&
-        l._creationTime < cutoff,
-    );
-  },
-});
+    const now = Date.now();
+    const due = await ctx.db
+      .query("outreach")
+      .withIndex("by_nextActionAt", (q) => q.gt("nextActionAt", 0).lt("nextActionAt", now))
+      .take(20);
 
-export const forceFailListing = internalMutation({
-  args: { listingId: v.id("listings") },
-  handler: async (ctx, { listingId }) => {
-    await ctx.db.patch(listingId, { status: "failed", error: "timed out" });
-  },
-});
+    for (const outreach of due) {
+      // Claim the row first so a concurrent sweep can't double-fire.
+      await ctx.db.patch(outreach._id, { nextActionAt: undefined });
 
-// The debounced schedule in convex/digest.ts should always cover new
-// content, but if it's ever lost for some owner (e.g. a scheduled function
-// silently failed) this is the backstop: for every owner with undigested,
-// settled content and no send currently scheduled, schedule one now.
-export const checkStalled = internalAction({
-  args: {},
-  handler: async (ctx) => {
-    const stuck = await ctx.runQuery(internal.maintenance.findStuckListings, {});
-    for (const listing of stuck) {
-      await ctx.runMutation(internal.maintenance.forceFailListing, { listingId: listing._id });
-    }
+      if (outreach.lastReplyAt !== undefined) continue;
 
-    const owners = await ctx.runQuery(internal.digest.pendingOwners, {});
-    for (const ownerEmail of owners) {
-      const schedule = await ctx.runQuery(internal.digest.getScheduleForOwner, { ownerEmail });
-      if (!schedule?.scheduledFunctionId) {
-        await ctx.runMutation(internal.digest.scheduleDigest, { ownerEmail, immediate: true });
+      if (outreach.followUpSentAt === undefined) {
+        await ctx.scheduler.runAfter(0, internal.pipeline.sendFollowUp, {
+          outreachId: outreach._id,
+        });
+        continue;
       }
+
+      const lead = await ctx.db.get(outreach.leadId);
+      if (!lead || lead.status === "won" || lead.status === "replied") continue;
+      await ctx.db.patch(lead._id, { status: "cold" });
+      await ctx.db.insert("activity", {
+        businessId: outreach.businessId,
+        leadId: outreach.leadId,
+        kind: "system",
+        message: `No reply from ${lead.name} after the follow-up — marked cold`,
+      });
+    }
+  },
+});
+
+// Weekly rescan: the standing job. Every business with rescan enabled gets
+// a fresh sourcing pass; placeId/url dedupe means only new leads surface.
+export const weeklyRescan = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const businesses = await ctx.db.query("businesses").take(100);
+    for (const business of businesses) {
+      if (!business.weeklyRescan || business.status !== "ready") continue;
+      await ctx.db.insert("activity", {
+        businessId: business._id,
+        kind: "system",
+        message: "Weekly rescan started — checking for new nearby competitors and events…",
+      });
+      await ctx.scheduler.runAfter(0, internal.pipeline.sourceLeads, {
+        businessId: business._id,
+        rescan: true,
+      });
     }
   },
 });
