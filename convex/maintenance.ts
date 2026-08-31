@@ -1,5 +1,25 @@
+import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
+
+// Test/ops utility: point a lead's outreach at a different address (e.g.
+// your own inbox to test the send → reply → auto-reply loop end to end).
+// Internal only — run via `npx convex run`.
+export const setLeadContactEmail = internalMutation({
+  args: { leadId: v.id("leads"), contactEmail: v.string() },
+  handler: async (ctx, { leadId, contactEmail }) => {
+    const lead = await ctx.db.get(leadId);
+    if (!lead) throw new Error("Lead not found");
+    await ctx.db.patch(leadId, { contactEmail: contactEmail.trim().toLowerCase() });
+    await ctx.db.insert("activity", {
+      businessId: lead.businessId,
+      leadId,
+      kind: "system",
+      message: `Contact email for ${lead.name} changed to ${contactEmail.trim().toLowerCase()} (manual override)`,
+    });
+    return null;
+  },
+});
 
 // Cron sweep over outreach rows whose nextActionAt has passed:
 // - reply came in → nothing to do (clear the marker)
