@@ -11,7 +11,14 @@ node_modules
 dist
 dist-ssr
 *.local
+
+# Secrets / credentials — never commit
 .env
+.env.*
+!.env.example
+.auth-keys.json
+*.pem
+*.key
 
 # Editor directories and files
 .vscode/*
