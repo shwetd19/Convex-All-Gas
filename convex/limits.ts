@@ -8,6 +8,11 @@ export const MAX_BUSINESSES = 3;
 export const MAX_OUTREACH_EMAILS = 20;
 export const LIMIT_CONTACT_EMAIL = "shwetasdhake16@gmail.com";
 
+// Probation: an account's first N outreach emails are always approve-each,
+// even if the owner turned on auto-send — so nobody's very first send is an
+// unreviewed email going to a stranger under their business's name.
+export const AUTO_SEND_PROBATION = 5;
+
 export const businessLimitMessage = `You've reached the free limit of ${MAX_BUSINESSES} businesses per account. For more, contact the organization at ${LIMIT_CONTACT_EMAIL}.`;
 export const emailLimitMessage = `You've reached the free limit of ${MAX_OUTREACH_EMAILS} outreach emails per account. For more, contact the organization at ${LIMIT_CONTACT_EMAIL}.`;
 
