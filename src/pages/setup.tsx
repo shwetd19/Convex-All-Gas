@@ -210,15 +210,23 @@ export function FailedCard({ business }: { business: BusinessDoc }) {
   return (
     <Card className="mx-auto w-full max-w-xl">
       <CardHeader>
-        <CardTitle>Setup failed</CardTitle>
+        <CardTitle>We couldn't finish setting this up</CardTitle>
         <CardDescription>{business.url}</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
         <Alert variant="destructive">
           <AlertCircle />
-          <AlertTitle>Something went wrong</AlertTitle>
-          <AlertDescription>{business.error ?? "Something went wrong."}</AlertDescription>
+          <AlertTitle>What happened</AlertTitle>
+          <AlertDescription>{business.error ?? "Something went wrong while reading the site."}</AlertDescription>
         </Alert>
+        <div className="rounded-xl border bg-muted/40 p-4 text-sm">
+          <div className="font-medium">Things that usually fix it</div>
+          <ul className="mt-2 space-y-1.5 text-muted-foreground">
+            <li>• Use the exact homepage URL (e.g. <span className="font-mono">yourbusiness.com</span>), not a deep link.</li>
+            <li>• Make sure the site shows a physical address — that's how the agent locates you on the map.</li>
+            <li>• Online-only businesses may not be on Google Places yet; add a city or address to your site and retry.</li>
+          </ul>
+        </div>
       </CardContent>
       <CardFooter className="gap-2">
         <Button
@@ -232,6 +240,7 @@ export function FailedCard({ business }: { business: BusinessDoc }) {
             }
           }}
         >
+          {busy ? <Loader2 className="animate-spin" /> : null}
           Try again
         </Button>
         <Button

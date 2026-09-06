@@ -67,6 +67,7 @@ export function AppSidebar({
   page,
   setPage,
   rows,
+  locked = false,
 }: {
   businesses: BusinessDoc[];
   selectedId: Id<"businesses"> | null;
@@ -75,6 +76,10 @@ export function AppSidebar({
   page: Page;
   setPage: (p: Page) => void;
   rows: LeadRow[] | undefined;
+  // Business is still setting up (scraping / confirm / failed): its lead
+  // pages, profile, settings and activity have nothing to show yet, so lock
+  // those nav items. Contact stays reachable.
+  locked?: boolean;
 }) {
   const { isMobile, setOpenMobile } = useSidebar();
   const selected = businesses.find((b) => b._id === selectedId) ?? businesses[0] ?? null;
@@ -86,12 +91,23 @@ export function AppSidebar({
     if (isMobile) setOpenMobile(false);
   };
 
-  const navItem = (key: Page, label: string, Icon: LucideIcon, count?: number) => (
+  const navItem = (
+    key: Page,
+    label: string,
+    Icon: LucideIcon,
+    count?: number,
+    disabled?: boolean,
+  ) => (
     <SidebarMenuItem key={key}>
       <SidebarMenuButton
-        isActive={page === key}
-        onClick={() => go(key)}
-        className="h-10 rounded-lg px-3 text-[0.9rem] text-sidebar-foreground/80 hover:bg-white/8 hover:text-white data-active:bg-white/10 data-active:text-white"
+        isActive={!disabled && page === key}
+        disabled={disabled}
+        onClick={() => !disabled && go(key)}
+        title={disabled ? "Available once setup finishes" : undefined}
+        className={cn(
+          "h-10 rounded-lg px-3 text-[0.9rem] text-sidebar-foreground/80 hover:bg-white/8 hover:text-white data-active:bg-white/10 data-active:text-white",
+          disabled && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-sidebar-foreground/80",
+        )}
       >
         <Icon className="opacity-70" />
         <span>{label}</span>
@@ -102,14 +118,24 @@ export function AppSidebar({
     </SidebarMenuItem>
   );
 
-  const scanning = selected?.status === "sourcing";
-  const agentLine = selected
-    ? scanning
-      ? "Scanning 5 buckets now"
-      : selected.lastScanAt
-        ? `5 buckets · synced ${formatAgo(selected.lastScanAt)}`
-        : "Waiting for first scan"
-    : "Add a business to start";
+  // Status flips to "ready" early while the 5-minute scan window keeps
+  // streaming leads, so treat an open scanUntil as still scanning.
+  const scanning =
+    selected?.status === "sourcing" ||
+    (selected?.scanUntil !== undefined && Date.now() < selected.scanUntil);
+  const failed = selected?.status === "failed";
+  const settingUp = selected?.status === "scraping" || selected?.status === "confirm";
+  const agentLine = !selected
+    ? "Add a business to start"
+    : failed
+      ? "Setup failed — see the panel"
+      : settingUp
+        ? "Setting up — reading the site"
+        : scanning
+          ? "Scanning your block now…"
+          : selected.lastScanAt
+            ? `5 buckets · synced ${formatAgo(selected.lastScanAt)}`
+            : "Waiting for first scan";
 
   return (
     <Sidebar collapsible="offcanvas" className="border-r-0">
@@ -187,7 +213,7 @@ export function AppSidebar({
             Workspace
           </SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>{navItem("profile", "Business profile", Building2)}</SidebarMenu>
+            <SidebarMenu>{navItem("profile", "Business profile", Building2, undefined, locked)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
         <SidebarGroup>
@@ -196,7 +222,9 @@ export function AppSidebar({
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {LEAD_NAV.map((t) => navItem(t.key, t.label, LEAD_ICON[t.key], countFor(t.key)))}
+              {LEAD_NAV.map((t) =>
+                navItem(t.key, t.label, LEAD_ICON[t.key], locked ? undefined : countFor(t.key), locked),
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -206,8 +234,8 @@ export function AppSidebar({
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {navItem("activity", "Activity", Activity)}
-              {navItem("settings", "Settings", Settings2)}
+              {navItem("activity", "Activity", Activity, undefined, locked)}
+              {navItem("settings", "Settings", Settings2, undefined, locked)}
               {navItem("contact", "Contact", Mail)}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -220,10 +248,20 @@ export function AppSidebar({
             <span
               className={cn(
                 "size-2 rounded-full",
-                scanning ? "animate-pulse bg-amber-400" : "bg-blue-400",
+                failed
+                  ? "bg-red-400"
+                  : scanning || settingUp
+                    ? "animate-pulse bg-amber-400"
+                    : "bg-blue-400",
               )}
             />
-            {scanning ? "Agent scanning" : "Agent online"}
+            {failed
+              ? "Setup failed"
+              : settingUp
+                ? "Agent setting up"
+                : scanning
+                  ? "Agent scanning"
+                  : "Agent online"}
           </div>
           <div className="mt-1 truncate text-xs text-sidebar-foreground/60">{agentLine}</div>
         </div>

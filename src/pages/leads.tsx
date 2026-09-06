@@ -139,8 +139,8 @@ export function LeadsPage({
           <CardContent className="py-10 text-center text-sm text-muted-foreground">
             {q
               ? "No leads match your search."
-              : business.status === "sourcing"
-                ? "Nothing judged in this category yet. Watch the Activity page."
+              : scanning
+                ? `Scanning your block — ${label.toLowerCase()} appear here as they're found. This can take the full 5 minutes.`
                 : "No leads in this category yet. Try a rescan from Settings."}
           </CardContent>
         </Card>

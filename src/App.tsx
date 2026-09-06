@@ -130,6 +130,17 @@ function Root() {
     setAdding(false);
   };
 
+  // While a business is still being set up (reading the site, awaiting
+  // confirmation, or failed) its lead pages, profile, settings and activity
+  // have nothing to show — the setup card is the only meaningful view. Lock
+  // those nav items so a click never lands on a mismatched "Setup failed"
+  // screen. Contact is app-level and stays reachable throughout.
+  const setupState =
+    !!selected &&
+    (selected.status === "scraping" ||
+      selected.status === "confirm" ||
+      selected.status === "failed");
+
   let content: ReactNode;
   let group = "";
   let title: string;
@@ -147,6 +158,11 @@ function Root() {
   } else if (!selected) {
     title = "";
     content = null;
+  } else if (page === "contact") {
+    // App-level — available even mid-setup or after a failure.
+    group = PAGE_GROUP.contact;
+    title = PAGE_TITLE.contact;
+    content = <ContactPage />;
   } else if (selected.status === "scraping") {
     title = "Setting up";
     content = <ProgressPanel business={selected} title="Reading the site…" />;
@@ -159,8 +175,7 @@ function Root() {
   } else {
     group = PAGE_GROUP[page];
     title = PAGE_TITLE[page];
-    if (page === "contact") content = <ContactPage />;
-    else if (page === "profile")
+    if (page === "profile")
       content = (
         <DashboardPage key={selected._id} business={selected} rows={rows ?? []} search={search} onGoTo={goTo} />
       );
@@ -185,6 +200,7 @@ function Root() {
           setAdding(false);
         }}
         rows={rows ?? undefined}
+        locked={setupState}
       />
       <SidebarInset>
         <AppHeader

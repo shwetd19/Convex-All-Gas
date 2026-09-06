@@ -113,7 +113,11 @@ export function DashboardView({
   const customerCount = live.filter((r) => r.lead.type === "customer").length;
   const openRow = openLeadId ? (rows.find((r) => r.lead._id === openLeadId) ?? null) : null;
 
-  const scanning = business.status === "sourcing";
+  // Status flips to "ready" early while the 5-minute scan window keeps
+  // streaming leads, so treat an open scanUntil as still scanning.
+  const scanning =
+    business.status === "sourcing" ||
+    (business.scanUntil !== undefined && now < business.scanUntil);
   const subtitle = [
     business.category,
     business.domain,
