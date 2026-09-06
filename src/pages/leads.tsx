@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { InboxBanner } from "@/components/inbox-banner";
+import { LeadBoard } from "@/components/lead-board";
 import { LeadCard } from "@/components/lead-card";
 import { LeadDialog } from "@/components/lead-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -17,6 +18,7 @@ import { Progress } from "@/components/ui/progress";
 import { SCAN_WINDOW_MS, errorMessage, formatClock, useNowTick } from "@/lib/format";
 import { LEAD_NAV, isDraftReady } from "@/lib/types";
 import type { BusinessDoc, LeadRow, LeadType } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 export function LeadsPage({
   business,
@@ -32,6 +34,7 @@ export function LeadsPage({
   const approveAll = useMutation(api.leads.approveAll);
   const [openLeadId, setOpenLeadId] = useState<Id<"leads"> | null>(null);
   const [approvingAll, setApprovingAll] = useState(false);
+  const [view, setView] = useState<"list" | "board">("list");
   const now = useNowTick(1000);
 
   const scanUntil = business.scanUntil;
@@ -64,15 +67,32 @@ export function LeadsPage({
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        title={label}
-        description={
-          <>
-            {business.name ?? business.url}
-            {business.address ? ` · ${business.address}` : ""}
-          </>
-        }
-      />
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <PageHeader
+          title={label}
+          description={
+            <>
+              {business.name ?? business.url}
+              {business.address ? ` · ${business.address}` : ""}
+            </>
+          }
+        />
+        <div className="inline-flex rounded-lg border bg-card p-0.5">
+          {(["list", "board"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setView(v)}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-sm font-medium capitalize transition-colors",
+                view === v ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {v}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <InboxBanner />
 
@@ -144,6 +164,8 @@ export function LeadsPage({
                 : "No leads in this category yet. Try a rescan from Settings."}
           </CardContent>
         </Card>
+      ) : view === "board" ? (
+        <LeadBoard rows={pageRows} onOpen={(id) => setOpenLeadId(id as Id<"leads">)} />
       ) : (
         <ul className="space-y-3">
           {pageRows.map((row) => (
