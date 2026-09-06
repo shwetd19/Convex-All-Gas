@@ -98,6 +98,10 @@ export default defineSchema({
     placeId: v.optional(v.string()),
     sourceUrl: v.optional(v.string()),
     contactEmail: v.optional(v.string()),
+    // Deliverability state of contactEmail. Unset = presumed good. "invalid"
+    // = failed syntax validation before sending; "bounced" = a send hard-
+    // bounced. Either one stops further outreach/follow-ups to this lead.
+    contactStatus: v.optional(v.union(v.literal("bounced"), v.literal("invalid"))),
     relevanceNote: v.optional(v.string()),
     // Where this lead was discovered ("Y Combinator", "Product Hunt", …);
     // unset for Google Places / event leads.
