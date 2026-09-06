@@ -2,6 +2,7 @@ import { ChevronDown, Plus } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  BarChart3,
   Briefcase,
   Building2,
   CalendarDays,
@@ -235,6 +236,7 @@ export function AppSidebar({
           <SidebarGroupContent>
             <SidebarMenu>
               {navItem("activity", "Activity", Activity, undefined, locked)}
+              {navItem("insights", "Insights", BarChart3, undefined, locked)}
               {navItem("settings", "Settings", Settings2, undefined, locked)}
               {navItem("contact", "Contact", Mail)}
             </SidebarMenu>

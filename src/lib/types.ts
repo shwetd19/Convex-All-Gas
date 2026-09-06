@@ -6,7 +6,7 @@ export type OutreachDoc = Doc<"outreach">;
 export type MessageDoc = Doc<"messages">;
 export type LeadRow = { lead: LeadDoc; outreach: OutreachDoc | null };
 export type LeadType = LeadDoc["type"];
-export type Page = LeadType | "activity" | "profile" | "settings" | "contact";
+export type Page = LeadType | "activity" | "insights" | "profile" | "settings" | "contact";
 
 export const TYPE_LABEL: Record<LeadType, string> = {
   competitor: "Competitor",
@@ -56,6 +56,7 @@ export const PAGE_TITLE: Record<Page, string> = {
   office: "Offices",
   event: "Events",
   activity: "Activity",
+  insights: "Insights",
   profile: "Business profile",
   settings: "Settings",
   contact: "Contact",
@@ -68,6 +69,7 @@ export const PAGE_GROUP: Record<Page, string> = {
   office: "Leads",
   event: "Leads",
   activity: "Agent",
+  insights: "Agent",
   profile: "Workspace",
   settings: "Agent",
   contact: "Agent",

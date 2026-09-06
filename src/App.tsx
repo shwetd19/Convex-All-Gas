@@ -23,6 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ActivityPage } from "@/pages/activity";
 import { ContactPage } from "@/pages/contact";
 import { DashboardPage } from "@/pages/dashboard";
+import { InsightsPage } from "@/pages/insights";
 import { LeadsPage } from "@/pages/leads";
 import { SettingsPage } from "@/pages/settings";
 import { ConfirmCard, FailedCard, Onboarding, ProgressPanel } from "@/pages/setup";
@@ -181,6 +182,7 @@ function Root() {
       );
     else if (page === "settings") content = <SettingsPage business={selected} />;
     else if (page === "activity") content = <ActivityPage businessId={selected._id} />;
+    else if (page === "insights") content = <InsightsPage business={selected} rows={rows ?? []} />;
     else content = <LeadsPage business={selected} rows={rows ?? []} type={page} search={search} />;
   }
 
