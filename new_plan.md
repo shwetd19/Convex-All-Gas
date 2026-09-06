@@ -1,14 +1,8 @@
 # new_plan.md — Block, from hackathon demo to real product
 
-A prioritized roadmap written as if Block were a real startup onboarding real
-business owners — not a demo. It folds in two inputs: a competitive read of
-Rilo (getrilo.ai), and a production-readiness review focused on trust, safety,
-and deliverability. Updated 2026-09-06.
+A prioritized roadmap written as if Block were a real startup onboarding real business owners — not a demo. It folds in two inputs: a competitive read of Rilo (getrilo.ai), and a production-readiness review focused on trust, safety, and deliverability. Updated 2026-09-06.
 
-The organizing principle: **Block sends real correspondence to real third
-parties under a real business's name.** That single fact is what separates the
-"can't ship without it" work from the "makes it better" work. Everything is
-ranked against it.
+The organizing principle: **Block sends real correspondence to real third parties under a real business's name.** That single fact is what separates the "can't ship without it" work from the "makes it better" work. Everything is ranked against it.
 
 ---
 

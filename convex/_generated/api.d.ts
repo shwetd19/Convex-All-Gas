@@ -21,6 +21,7 @@ import type * as lib_agentmailRest from "../lib/agentmailRest.js";
 import type * as lib_parseFrom from "../lib/parseFrom.js";
 import type * as lib_places from "../lib/places.js";
 import type * as lib_text from "../lib/text.js";
+import type * as limits from "../limits.js";
 import type * as maintenance from "../maintenance.js";
 import type * as outreach from "../outreach.js";
 import type * as pipeline from "../pipeline.js";
@@ -46,6 +47,7 @@ declare const fullApi: ApiFromModules<{
   "lib/parseFrom": typeof lib_parseFrom;
   "lib/places": typeof lib_places;
   "lib/text": typeof lib_text;
+  limits: typeof limits;
   maintenance: typeof maintenance;
   outreach: typeof outreach;
   pipeline: typeof pipeline;

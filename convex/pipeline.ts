@@ -18,6 +18,7 @@ import { FirecrawlClient } from "@firecrawl/firecrawl-convex";
 import { agentmailApiFetch } from "./lib/agentmailRest";
 import { searchNearbyPlaces, searchTextPlaces, type Place } from "./lib/places";
 import { extractEmails, extractExternalUrl, textToHtml } from "./lib/text";
+import { LIMIT_CONTACT_EMAIL } from "./limits";
 import type { Id, Doc } from "./_generated/dataModel";
 
 const firecrawl = new FirecrawlClient(components.firecrawl);
@@ -735,6 +736,20 @@ export const sendOutreach = internalAction({
     if (!outreach || outreach.sentAt !== undefined) return;
     const lead = await ctx.runQuery(internal.leads.get, { leadId: outreach.leadId });
     if (!lead?.contactEmail) return;
+
+    // Backstop for the auto-send path: never exceed the per-account email cap.
+    const usage = await ctx.runQuery(internal.limits.sentCountForBusinessOwner, {
+      businessId: outreach.businessId,
+    });
+    if (usage.count >= usage.cap) {
+      await ctx.runMutation(internal.activity.log, {
+        businessId: outreach.businessId,
+        leadId: outreach.leadId,
+        kind: "system",
+        message: `Send held for ${lead.name}: account reached the ${usage.cap}-email free limit. Contact ${LIMIT_CONTACT_EMAIL} to raise it.`,
+      });
+      return;
+    }
 
     try {
       const inbox = await ctx.runQuery(internal.inbox.getInternal, {});

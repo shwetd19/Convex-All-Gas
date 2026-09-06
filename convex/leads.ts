@@ -9,6 +9,12 @@ import {
 import { internal } from "./_generated/api";
 import { leadTypeValidator, leadStatusValidator } from "./schema";
 import { requireBusinessRead, requireOwnedBusiness } from "./businesses";
+import {
+  MAX_OUTREACH_EMAILS,
+  countSentOutreachForUser,
+  emailLimitMessage,
+} from "./limits";
+import { getAuthUserId } from "@convex-dev/auth/server";
 import type { Doc } from "./_generated/dataModel";
 
 // The dashboard's main data: every lead for one of my businesses, each
@@ -64,6 +70,10 @@ export const approve = mutation({
     const lead = await ctx.db.get(leadId);
     if (!lead) throw new Error("Lead not found");
     await requireOwnedBusiness(ctx, lead.businessId);
+    const userId = await getAuthUserId(ctx);
+    if (userId && (await countSentOutreachForUser(ctx, userId)) >= MAX_OUTREACH_EMAILS) {
+      throw new Error(emailLimitMessage);
+    }
     const outreach = await ctx.db
       .query("outreach")
       .withIndex("by_leadId", (q) => q.eq("leadId", leadId))
@@ -77,12 +87,18 @@ export const approveAll = mutation({
   args: { businessId: v.id("businesses") },
   handler: async (ctx, { businessId }) => {
     await requireOwnedBusiness(ctx, businessId);
+    const userId = await getAuthUserId(ctx);
+    // Per-account email cap: only fill the remaining allowance.
+    const alreadySent = userId ? await countSentOutreachForUser(ctx, userId) : 0;
+    let remaining = MAX_OUTREACH_EMAILS - alreadySent;
+    if (remaining <= 0) throw new Error(emailLimitMessage);
     const leads = await ctx.db
       .query("leads")
       .withIndex("by_businessId", (q) => q.eq("businessId", businessId))
       .take(300);
     let approved = 0;
     for (const lead of leads) {
+      if (remaining <= 0) break;
       if (lead.status !== "sourced" || !lead.contactEmail) continue;
       const outreach = await ctx.db
         .query("outreach")
@@ -91,6 +107,7 @@ export const approveAll = mutation({
       if (!outreach || outreach.draftStatus !== "ready" || outreach.sentAt !== undefined) continue;
       await approveLead(ctx, lead, outreach);
       approved += 1;
+      remaining -= 1;
       if (approved >= 25) break;
     }
     return approved;

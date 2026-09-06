@@ -9,6 +9,7 @@ import {
 import { internal } from "./_generated/api";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import type { Id } from "./_generated/dataModel";
+import { MAX_BUSINESSES, businessLimitMessage, countOwnBusinesses } from "./limits";
 
 // A user can run any number of businesses. Every public function takes the
 // businessId it operates on and verifies ownership server-side — never
@@ -47,6 +48,10 @@ export const create = mutation({
   handler: async (ctx, { url }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not signed in");
+    // Free-tier cap: at most MAX_BUSINESSES per account (demo excluded).
+    if ((await countOwnBusinesses(ctx, userId)) >= MAX_BUSINESSES) {
+      throw new Error(businessLimitMessage);
+    }
     const trimmed = url.trim();
     if (!trimmed) throw new Error("Enter your business URL");
     const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
