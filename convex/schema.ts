@@ -157,6 +157,15 @@ export default defineSchema({
     .index("by_outreachId", ["outreachId"])
     .index("by_agentmailMessageId", ["agentmailMessageId"]),
 
+  // Global opt-out list (CAN-SPAM). Once an address is here — via the
+  // unsubscribe link or a bounce — the agent never contacts it again, across
+  // businesses and rescans. Checked before every cold send.
+  suppressions: defineTable({
+    email: v.string(), // lowercased
+    reason: v.optional(v.string()),
+    source: v.optional(v.string()), // "unsubscribe" | "bounce" | "manual"
+  }).index("by_email", ["email"]),
+
   // Timestamped log per business — the live "watch the agent work" feed
   // (sourced → drafted → sent → replied). Ordered by _creationTime.
   activity: defineTable({
