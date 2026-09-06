@@ -33,25 +33,11 @@ at **shwetasdhake16@gmail.com**.
 
 ## Tier 1 — Cannot onboard real users without these
 
-### 1.1 Email deliverability infrastructure — **L** · 🔜 highest priority
-Today all mail sends from one shared `block@agentmail.to` inbox — fine for a
-demo, dangerous at volume (one bad actor poisons everyone's reputation).
-- SPF / DKIM / DMARC aligned on the sending domain(s); domain warm-up;
-  per-tenant send-rate limits.
-- Decide the model: warmed shared Block domain + strict per-tenant caps vs.
-  per-customer sending domains (better isolation, more setup). Confirm what
-  AgentMail handles vs. what Block owns.
-- *Convex fit:* rate-limit sends with **`@convex-dev/rate-limiter`** instead of
-  hand-rolled counters; the scheduler already spaces sends. (The 20-email cap
-  above is the account-level version of this; 1.1 is the per-domain/day layer.)
-
 ### 1.2 CAN-SPAM / opt-out compliance — **M** · ⬜ *do with 1.1*
 - A real unsubscribe mechanism in every outbound email.
-- A **suppression list**, honored permanently and globally — once someone opts
-  out, no lead row for them is ever contacted again, across rescans.
+- A **suppression list**, honored permanently and globally — once someone opts out, no lead row for them is ever contacted again, across rescans.
 - Physical mailing address + clear sender identity in the footer (CAN-SPAM).
-- *Schema:* add a `suppressions` table (by email + by domain), checked in
-  `sendOutreach` / `sendFollowUp` / `sendAutoReply` before every send. Wire an
+- *Schema:* add a `suppressions` table (by email + by domain), checked in `sendOutreach` / `sendFollowUp` / `sendAutoReply` before every send. Wire an
   unsubscribe link → public HTTP action that inserts the suppression.
 
 ### 1.3 Auto-send probation for new users — **S** · ⬜
@@ -84,14 +70,12 @@ human can reasonably read as automated. Reputational + legal weight.
 ### 2.2 Bounce & contact-validation handling — **M** · ⬜
 Scraped emails are often stale or generic (`info@`).
 - Detect bounces via the AgentMail webhook (`convex/http.ts` + `email.ts`);
-  mark the lead's contact dead (`contactStatus: "bounced"`), don't burn a
-  follow-up on it.
+  mark the lead's contact dead (`contactStatus: "bounced"`), don't burn a follow-up on it.
 - Lightweight syntax/MX validation before the first send; prefer role-based
   fallbacks intelligently.
 
 ### 2.4 Observability beyond the happy path — **M** · ⬜
-Failed scrapes, API quota hits (429s), and send failures need visible status,
-not silent drops.
+Failed scrapes, API quota hits (429s), and send failures need visible status, not silent drops.
 - *Convex fit:* the app already logs to `activity`; add explicit failure kinds
   (`scrape_failed`, `quota_hit`, `send_failed`) and a per-business health
   summary query surfaced as a status strip. Use Convex insights/advisor for

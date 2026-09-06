@@ -195,3 +195,24 @@ blacklist a domain or create legal exposure" and "a real product"; billing +
 caps are the line between "demo" and "safe to let strangers sign up." Do those
 two blocks first — everything else is optimization on top of a product that is
 actually safe to run.
+
+
+
+
+
+
+
+
+### LEFT 
+
+### 1.1 Email deliverability infrastructure — **L** · 🔜 highest priority
+Today all mail sends from one shared `block@agentmail.to` inbox — fine for a
+demo, dangerous at volume (one bad actor poisons everyone's reputation).
+- SPF / DKIM / DMARC aligned on the sending domain(s); domain warm-up;
+  per-tenant send-rate limits.
+- Decide the model: warmed shared Block domain + strict per-tenant caps vs.
+  per-customer sending domains (better isolation, more setup). Confirm what
+  AgentMail handles vs. what Block owns.
+- *Convex fit:* rate-limit sends with **`@convex-dev/rate-limiter`** instead of
+  hand-rolled counters; the scheduler already spaces sends. (The 20-email cap
+  above is the account-level version of this; 1.1 is the per-domain/day layer.)
