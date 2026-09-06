@@ -78,6 +78,9 @@ export default defineSchema({
     approvalMode: v.union(v.literal("approve_each"), v.literal("auto_send")),
     followUpDelayDays: v.number(),
     weeklyRescan: v.boolean(),
+    // Optional scheduling link (Calendly-style). When set, the agent offers it
+    // in outreach so an interested lead can book a call directly.
+    bookingUrl: v.optional(v.string()),
     // Agent auto-responds to inbound replies (undefined = on).
     autoReply: v.optional(v.boolean()),
     // The shared, read-only sample workspace shown to every signed-in user so

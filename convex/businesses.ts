@@ -181,6 +181,7 @@ export const updateSettings = mutation({
     followUpDelayDays: v.optional(v.number()),
     weeklyRescan: v.optional(v.boolean()),
     autoReply: v.optional(v.boolean()),
+    bookingUrl: v.optional(v.string()),
   },
   handler: async (ctx, { businessId, ...args }) => {
     await requireOwnedBusiness(ctx, businessId);
@@ -191,6 +192,10 @@ export const updateSettings = mutation({
     }
     if (args.weeklyRescan !== undefined) patch.weeklyRescan = args.weeklyRescan;
     if (args.autoReply !== undefined) patch.autoReply = args.autoReply;
+    if (args.bookingUrl !== undefined) {
+      const url = args.bookingUrl.trim();
+      patch.bookingUrl = url === "" ? undefined : /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    }
     await ctx.db.patch(businessId, patch);
   },
 });
