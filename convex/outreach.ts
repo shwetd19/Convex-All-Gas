@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { requireOwnedBusiness } from "./businesses";
+import { requireBusinessRead, requireOwnedBusiness } from "./businesses";
 import { replyClassificationValidator } from "./schema";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -12,7 +12,7 @@ export const getForLead = query({
   handler: async (ctx, { leadId }) => {
     const lead = await ctx.db.get(leadId);
     if (!lead) return null;
-    await requireOwnedBusiness(ctx, lead.businessId);
+    await requireBusinessRead(ctx, lead.businessId);
     const outreach = await ctx.db
       .query("outreach")
       .withIndex("by_leadId", (q) => q.eq("leadId", leadId))

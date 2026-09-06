@@ -134,8 +134,15 @@ export function AppSidebar({
                 {selected ? initials(selected.name ?? selected.url) : "+"}
               </div>
               <div className="min-w-0 flex-1 leading-tight">
-                <div className="truncate text-sm font-semibold text-slate-900">
-                  {selected ? (selected.name ?? selected.url) : "Add a business"}
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate text-sm font-semibold text-slate-900">
+                    {selected ? (selected.name ?? selected.url) : "Add a business"}
+                  </span>
+                  {selected?.isDemo && (
+                    <span className="shrink-0 rounded-full bg-violet-100 px-1.5 py-0.5 text-[0.6rem] font-bold tracking-wide text-violet-700 uppercase">
+                      Demo
+                    </span>
+                  )}
                 </div>
                 <div className="text-xs text-slate-500">
                   {businesses.length} {businesses.length === 1 ? "workspace" : "workspaces"}
@@ -156,6 +163,11 @@ export function AppSidebar({
                   {initials(b.name ?? b.url)}
                 </div>
                 <span className="truncate">{b.name ?? b.url}</span>
+                {b.isDemo && (
+                  <span className="ml-auto shrink-0 rounded-full bg-violet-100 px-1.5 py-0.5 text-[0.6rem] font-bold tracking-wide text-violet-700 uppercase">
+                    Demo
+                  </span>
+                )}
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />

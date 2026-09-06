@@ -7,6 +7,7 @@ import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
 import SignInForm from "./Auth";
 import { AppSidebar } from "@/components/app-sidebar";
+import { DemoBanner } from "@/components/demo-banner";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -119,7 +120,11 @@ function Root() {
   if (!isAuthenticated) return <SignInForm />;
   if (businesses === undefined || businesses === null) return <LoadingScreen />;
 
-  const showOnboarding = adding || businesses.length === 0;
+  // The shared demo workspace is appended to everyone's list — but the
+  // onboarding flow is unchanged, keyed on the user's OWN businesses, so a new
+  // user still lands on "paste your URL". The demo just sits in the switcher.
+  const ownBusinesses = businesses.filter((b) => !b.isDemo);
+  const showOnboarding = adding || (ownBusinesses.length === 0 && selectedId === null);
   const goTo = (t: LeadType) => {
     setPage(t);
     setAdding(false);
@@ -136,7 +141,7 @@ function Root() {
           setSelectedId(id);
           setAdding(false);
         }}
-        onCancel={businesses.length > 0 ? () => setAdding(false) : undefined}
+        onCancel={adding ? () => setAdding(false) : undefined}
       />
     );
   } else if (!selected) {
@@ -190,7 +195,10 @@ function Root() {
           email={me?.email}
           onSignOut={() => void signOut()}
         />
-        <div className="mx-auto w-full min-w-0 max-w-7xl flex-1 p-4 sm:p-6 lg:p-8">{content}</div>
+        <div className="mx-auto w-full min-w-0 max-w-7xl flex-1 p-4 sm:p-6 lg:p-8">
+          {selected?.isDemo && !showOnboarding && <DemoBanner onAdd={() => setAdding(true)} />}
+          {content}
+        </div>
       </SidebarInset>
     </SidebarProvider>
   );

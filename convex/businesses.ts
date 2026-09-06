@@ -13,12 +13,31 @@ import type { Id } from "./_generated/dataModel";
 // A user can run any number of businesses. Every public function takes the
 // businessId it operates on and verifies ownership server-side — never
 // trusting the client beyond "which of MY businesses".
+//
+// Write path: only the owner, and never the shared demo (which is read-only for
+// everyone, including the account that technically owns the row).
 export async function requireOwnedBusiness(ctx: QueryCtx, businessId: Id<"businesses">) {
   const userId = await getAuthUserId(ctx);
   if (!userId) throw new Error("Not signed in");
   const business = await ctx.db.get(businessId);
-  if (!business || business.userId !== userId) throw new Error("Not your business");
+  if (!business) throw new Error("Not your business");
+  if (business.isDemo) {
+    throw new Error("This is the shared demo workspace — add your own business to run real outreach.");
+  }
+  if (business.userId !== userId) throw new Error("Not your business");
   return business;
+}
+
+// Read path: the owner, or ANY signed-in user when it's the shared demo. Used
+// by the dashboard queries (leads / activity / thread) so everyone can explore
+// the demo, while writes stay locked down via requireOwnedBusiness above.
+export async function requireBusinessRead(ctx: QueryCtx, businessId: Id<"businesses">) {
+  const userId = await getAuthUserId(ctx);
+  if (!userId) throw new Error("Not signed in");
+  const business = await ctx.db.get(businessId);
+  if (!business) throw new Error("Not found");
+  if (business.isDemo || business.userId === userId) return business;
+  throw new Error("Not your business");
 }
 
 // Add a business: "Paste your business URL". Always creates a new one —
@@ -48,17 +67,25 @@ export const create = mutation({
   },
 });
 
-// All of the signed-in user's businesses, newest first.
+// All of the signed-in user's businesses, newest first — plus the shared,
+// read-only demo workspace appended at the end so every user has a populated
+// Block to explore. The demo is deduped for the account that owns its row.
 export const list = query({
   args: {},
   handler: async (ctx) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) return null;
-    return await ctx.db
+    const own = await ctx.db
       .query("businesses")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .order("desc")
       .take(50);
+    const demo = await ctx.db
+      .query("businesses")
+      .withIndex("by_isDemo", (q) => q.eq("isDemo", true))
+      .first();
+    if (demo && !own.some((b) => b._id === demo._id)) return [...own, demo];
+    return own;
   },
 });
 

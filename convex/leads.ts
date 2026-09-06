@@ -8,7 +8,7 @@ import {
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { leadTypeValidator, leadStatusValidator } from "./schema";
-import { requireOwnedBusiness } from "./businesses";
+import { requireBusinessRead, requireOwnedBusiness } from "./businesses";
 import type { Doc } from "./_generated/dataModel";
 
 // The dashboard's main data: every lead for one of my businesses, each
@@ -16,7 +16,7 @@ import type { Doc } from "./_generated/dataModel";
 export const list = query({
   args: { businessId: v.id("businesses") },
   handler: async (ctx, { businessId }) => {
-    await requireOwnedBusiness(ctx, businessId);
+    await requireBusinessRead(ctx, businessId);
     const leads = await ctx.db
       .query("leads")
       .withIndex("by_businessId", (q) => q.eq("businessId", businessId))

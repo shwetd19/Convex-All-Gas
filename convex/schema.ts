@@ -80,7 +80,13 @@ export default defineSchema({
     weeklyRescan: v.boolean(),
     // Agent auto-responds to inbound replies (undefined = on).
     autoReply: v.optional(v.boolean()),
-  }).index("by_userId", ["userId"]),
+    // The shared, read-only sample workspace shown to every signed-in user so
+    // they can explore a populated Block before adding their own business.
+    // Exactly one row carries this. Reads are open to all; writes are blocked.
+    isDemo: v.optional(v.boolean()),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_isDemo", ["isDemo"]),
 
   // One row per sourced contact — the standing job, not a one-shot.
   leads: defineTable({

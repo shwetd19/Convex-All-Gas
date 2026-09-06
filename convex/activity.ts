@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, query } from "./_generated/server";
-import { requireOwnedBusiness } from "./businesses";
+import { requireBusinessRead } from "./businesses";
 
 // One line in the live "watch the agent work" feed.
 export const log = internalMutation({
@@ -19,7 +19,7 @@ export const log = internalMutation({
 export const list = query({
   args: { businessId: v.id("businesses") },
   handler: async (ctx, { businessId }) => {
-    await requireOwnedBusiness(ctx, businessId);
+    await requireBusinessRead(ctx, businessId);
     return await ctx.db
       .query("activity")
       .withIndex("by_businessId", (q) => q.eq("businessId", businessId))
