@@ -1,20 +1,26 @@
 # Hackathon log
 
-- **Project:** Sift (formerly Listing Digest)
+- **Project:** Block (pivoted from Sift, formerly Listing Digest — same repo)
 - **Event:** Convex All Gas Hackathon
-- **What it does:** Forward job alerts (or apartment listings, newsletters) with a one-line note of what you want; every link is scraped, scored, and batched into one ranked email — then reply "skip #2" / "more like #3" to steer how the next batch is ranked.
+- **What it does:** Paste your business URL; an AI agent maps your real nearby competitors, complements, offices, and prospective customers (grounded in Google Places + startup directories), drafts personalized outreach per lead, sends from its own AgentMail inbox, follows up, classifies replies, and rescans weekly.
 - **Live app:** https://flippant-stork-696.convex.site
 - **Repo:** https://github.com/shwetd19/Convex-All-Gas
 - **Frontend:** Convex static hosting
 - **Convex deployment:** https://flippant-stork-696.convex.cloud
 - **Components:** @agentmail/convex, @firecrawl/firecrawl-convex, @convex-dev/static-hosting
+- **Other data sources:** Google Places API (New); startup/B2B directories (Y Combinator, Product Hunt, Wellfound, Clutch, F6S)
 - **Convex features:** schema, indexes, queries, mutations, actions, internal functions, HTTP actions, crons, scheduled functions (cancel + reschedule), realtime queries, Convex Auth
 - **Auth:** Convex Auth
 - **AI models:** gpt-4o-mini
 - **Started:** 2026-08-27T11:01:54Z
-- **Last updated:** 2026-08-30T16:26:54Z
+- **Last updated:** 2026-09-03T00:00:00Z
 
 ## Log
+
+> The entries below 2026-08-30 document Sift, the job-digest app this repo
+> started as. On 2026-08-31 the project pivoted to Block (a local-business
+> outreach agent), reusing the Convex + Firecrawl + AgentMail + OpenAI
+> foundation. Block-era entries follow.
 
 ### 2026-08-27 - 4f754b3
 Initial commit with project scaffolding (LICENSE, README, .gitattributes). No Convex project or application code yet.
@@ -64,3 +70,52 @@ HTML-only marketing emails producing zero links; 28 tracking-URL variants of the
 postings; long URLs/error stacks overflowing the layout. Convex features: schema, indexes,
 queries, mutations, actions, HTTP actions, crons, scheduler cancel/reschedule, realtime queries,
 Convex Auth, static hosting.
+
+### 2026-08-31 - 04ab54a
+Pivoted from Sift to Block: a local-business outreach agent. Reframed the whole product
+around a single input — paste a business URL — reusing the Convex + Firecrawl + AgentMail +
+OpenAI foundation. New schema (`convex/schema.ts`): `businesses` (scraped profile + status
+machine scraping → confirm → sourcing → ready), `leads` (type competitor/complement/office/
+event/customer, a full status lifecycle sourced → approved → outreach_sent → replied →
+followed_up → cold → won, a relevance note and score), `outreach`, `messages`, and `activity`.
+Intake (`convex/pipeline.ts`): Firecrawl scrapes the site, OpenAI extracts name/offerings/
+category/location, then a "Is this you?" confirm gate. Added the Google Places API (New)
+client (`convex/lib/places.ts`) to ground "nearby" in real data instead of hallucinated names,
+and an OpenAI relevance judge that reads each candidate's actual offerings.
+
+### 2026-08-31 - 4420897
+Firecrawl was 429-ing during a sourcing scan (candidates scraped ~1.5s apart blew the
+free-tier per-minute cap). Added backoff-retry honoring the "retry after Ns" hint in
+`scrapeMarkdown`, and spaced enrichment candidates ~10s apart.
+
+### 2026-08-31 - a1936f8 → bb5537b
+Made it a real multi-business product with a production UI: unlimited businesses per account
+(every function verifies ownership server-side), a bright SaaS dashboard, per-lead draft review
+in a modal, AgentMail sending from its own inbox with in-app threads, a follow-up default of
+2 days, and a **hard 5-minute scan budget per business** to protect Google/Firecrawl quota.
+Scaled sourcing from ~9 to ~140 candidates with a two-tier metadata-triage → deep-enrichment
+pass, and added a customer-prospect branch sourcing from startup/B2B directories
+(Y Combinator, Product Hunt, Wellfound, Clutch, F6S). On an inbound reply, OpenAI classifies it
+(interested / not interested / needs info), the owner is emailed, and a 1-hour grace window
+precedes any agent auto-reply.
+
+### 2026-08-31 - f0ccc6f
+Design-review guardrail: the agent answering real third parties unsupervised is a departure
+from "human stays in control", so auto-reply is now an explicit **opt-in, off by default** —
+new businesses default `autoReply: false`, `sendAutoReply` requires an explicit opt-in, and
+existing rows were flipped off.
+
+### 2026-08-31 - 9204015, b03855a, a1aae96
+UX pass: a live scan-window indicator that shows "still checking" for the full 5 minutes then
+"done checking" (driven by a `scanUntil` field + realtime query), a ChatGPT-style bright hero
+for the add-business page, a Contact page, and a rebuilt sectioned SaaS Settings page.
+
+### 2026-09-02 - 1af034d
+Rebuilt the frontend on shadcn/ui with a proper SaaS dashboard layout (sidebar + business
+switcher, per-lead-type sections with counts, activity feed, settings, contact), replacing the
+hand-rolled CSS.
+
+### 2026-09-03 - 18dfac2
+Hardened `.gitignore` (all `.env*` except `.env.example`, auth keys, `.pem`/`.key`) and audited
+the repo for secrets before making it public — no env files or real secret values were ever
+tracked or in history.

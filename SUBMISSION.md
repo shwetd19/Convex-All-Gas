@@ -1,120 +1,98 @@
-# Sift — vibeapps submission draft
+# Block — vibeapps submission draft
 
-> Paste into the vibeapps form. Every number below is from a real run on the
-> production deployment, not a mock.
+> Paste into the vibeapps form. Describes the live production deployment.
 
-**Tagline:** Forward job alerts. Get one ranked email back. Reply to steer the next one.
+**Tagline:** Paste your business URL. An AI agent maps your real local
+competitors and customers, then runs personalized outreach from its own inbox.
 
 ## The problem
 
-You applied to forty jobs. Now every morning there are six alert emails from
-LinkedIn, Naukri, Glassdoor, and company career pages, each one thirty links
-of "you might also like". The thing you actually want — the two roles that
-are remote, senior, and pay what you need — is in there somewhere. Nobody
-opens thirty tabs. So the alerts get archived unread, and the good listing
-goes with them.
+A local business owner — a gym, a studio, a dry cleaner, an agency — knows they
+should be reaching out to the businesses around them: the offices that could
+become customers, the complementary shops worth partnering with, the events
+happening down the street. But nobody has time to research who's actually nearby,
+figure out which ones matter, find a contact, write a personal email to each,
+remember to follow up, and do it again next week. So it never happens.
 
-Same shape for apartments, same shape for newsletters: a stream of
-link-heavy emails where the signal-to-noise is terrible and the only way to
-find the signal is to read everything.
+The generic "AI GTM" tools that exist are built for funded startups with a
+sales team and an ICP spreadsheet. They make you *configure workflows*. A shop
+owner needs the opposite: paste one link, and it just works.
 
 ## How it works
 
-You forward the email to your Sift address with one line at the top:
-`remote, senior, $150k+`. That's the whole interface.
+You paste your business URL. That's the whole interface.
 
-- **It reads the email properly.** Marketing mail ships a plaintext part
-  that is 12 KB of zero-width spam-filter padding with no links, while the
-  real links live only in the HTML `href`s. Sift reads both. Then it drops
-  the tracking noise — one LinkedIn application-confirmation email produced
-  **28 URLs for 6 real postings** (a different `trackingId` for the logo,
-  the title, and the Apply button of the same job) — by deduping on
-  origin + path, and excludes social profiles, app-store links, and
-  LinkedIn's navigation chrome before spending a single Firecrawl call.
-- **Firecrawl scrapes each link** to markdown. Postings it can't reach
-  (LinkedIn itself returns 403 to all scrapers) are marked failed and shown
-  as such — the digest never pretends.
-- **OpenAI extracts and scores.** Title, pay, location, a one-line summary,
-  a category (jobs / flats / newsletter), and a 0–100 score against your
-  note with a one-sentence reason — *and* against everything you've said in
-  earlier replies (see below).
-- **Convex batches it.** Every forward reschedules a 20-minute debounce
-  for *you specifically* (`ctx.scheduler` cancel + reschedule, one
-  `digestSchedule` row per forwarder). Six forwards in ten minutes produce
-  one email, twenty minutes after the last one. Reply `now` — or click the
-  button — and it goes immediately: measured **17 seconds** from the reply
-  landing to the digest in the inbox.
-- **AgentMail sends one ranked digest** back in the same thread, numbered,
-  grouped by category, with the reason next to each score.
-- **You reply to steer it.** `skip #2`, `more like #3`, `less like #1`, or
-  plain English ("the Bentley one is too senior" — one small OpenAI call
-  maps it onto the numbered list). Sift records the rule, confirms in-thread
-  ("Skipping listings like #2 (Director, Software Engineering,
-  jobs.bentley.com)"), and every future listing is scored with it in the
-  prompt: a previously skipped URL scores 0–10, lookalikes by source /
-  employer / role get nudged. The rules are visible on the dashboard and
-  removable.
+- **It reads your business.** Firecrawl scrapes your site; OpenAI extracts what
+  you actually sell, your category, and your location. You get a "Is this you?"
+  confirm step that catches a wrong match before a sourcing run is spent.
+- **It maps your block, grounded in real data.** OpenAI has no real-time
+  knowledge of what's physically near an address — ask it cold and it invents
+  plausible business names. So Block grounds sourcing in **Google Places (New)**
+  for real nearby competitors, complements, and offices, and in startup/B2B
+  directories (Y Combinator, Product Hunt, Wellfound, Clutch, F6S) for
+  prospective customers. Firecrawl scrapes each candidate; OpenAI judges it by
+  its *actual offerings* — competitor, complement, office, event, or customer —
+  because category alone is a weak signal (a bakery and a coffee shop are both
+  "food" but might be partners, not rivals). A two-tier pass stores every lead
+  from cheap metadata triage, then deep-enriches the top-scored to find a contact
+  email — all inside a hard **5-minute scan budget** that protects API quota.
+- **It drafts outreach per lead.** OpenAI writes a personalized email referencing
+  something real about each lead. Drafts are reviewable and editable in-app.
+- **AgentMail sends from its own inbox.** `block@agentmail.to` — a dedicated
+  Block-branded identity, never the owner's personal inbox — with one thread per
+  lead. This is what keeps it an *agent* instead of a mail merge.
+- **It follows up and handles replies on its own.** One automatic follow-up after
+  N days (default 2), then it stops — no spamming real businesses. An inbound
+  reply is captured via AgentMail's signed webhook and classified by OpenAI
+  (interested / not interested / needs info); the owner is emailed immediately,
+  and only if they explicitly opt in does the agent auto-reply, after a 1-hour
+  grace window so a human can step in first.
+- **It keeps working with zero input.** A weekly rescan cron re-sources the block
+  and surfaces new leads automatically — the agent always has something to do.
 
-The dashboard is live throughout: a segmented progress bar for the batch in
-flight, rows that flash as they move pending → scraping → ranked, a
-per-second countdown to the next send, the digests that went out, and the
-steering rules in effect.
+The dashboard is live throughout (Convex realtime queries): a scan-progress
+indicator that shows "still checking" across the full 5 minutes then "done",
+lead cards grouped by type with a relevance note and a status badge that changes
+color the moment a cron or reply moves it, full in-app threads, and an activity
+feed.
 
 ## Why it's different
 
-Most "email → LLM → email" demos are a single round trip. Sift's loop
-closes: the digest is a numbered artifact you can talk back to, and what
-you say changes the next ranking. The batching means you get *one* email
-per session, not one per forward. And two people can share the inbox
-without ever seeing each other's listings — the dashboard is scoped by
-login, and the queue is scoped by who forwarded.
+Every "AI GTM agent" on the market is a horizontal platform you *configure* —
+you describe workflows, wire up 100 integrations, and watch digital signals.
+Block is the opposite bet: **one URL, zero config, and true local grounding.**
+It's the only one that answers "who is physically on my block, and are they a
+rival or a partner?" — and it doesn't just draft; it owns the whole
+send → follow-up → classify-reply loop from its own inbox. The human stays in
+control (approve each draft; auto-reply is off by default), which is exactly the
+line an agent acting on your behalf toward real third parties should respect.
 
 ## Stack, per sponsor
 
-- **Convex** — database (6 app tables + Convex Auth tables, 7 app indexes),
-  queries, mutations, Node actions, HTTP actions (AgentMail webhook,
-  auth routes, static site), crons (a 5-minute safety-net sweep), the
-  scheduler for per-user debounce, realtime queries driving every part of
-  the dashboard, Convex Auth (password), and three components:
-  `@firecrawl/firecrawl-convex`, `@agentmail/convex` (plus its two
-  workpools), `@convex-dev/static-hosting`. Frontend served from
-  `convex.site`.
-- **Firecrawl** — every listing page → markdown via the component's
-  `scrape`.
-- **AgentMail** — inbox identity, Svix-signed webhook ingest, threaded
-  replies for digests and steering confirmations.
-- **OpenAI** — `gpt-4o-mini` for field extraction + classification +
-  scoring, digest composition, and reply-intent fallback.
-- React 19, Vite, TypeScript.
+- **Convex** — the entire state machine: schema (businesses, leads, outreach,
+  messages, activity) with per-purpose indexes, queries, mutations, Node actions,
+  HTTP actions (the AgentMail webhook), the scheduler, crons (weekly rescan +
+  follow-up sweep), realtime queries driving every part of the dashboard, Convex
+  Auth (password), and `@convex-dev/static-hosting` serving the frontend from
+  `convex.site`. Server-side ownership checks on every business-scoped function.
+- **Firecrawl** — `@firecrawl/firecrawl-convex`: the user's own site + per-lead
+  enrichment to markdown, with rate-limit backoff honoring the retry hint.
+- **Google Places API (New)** — real nearby places by category/radius, so the
+  LLM reasons over grounded facts instead of hallucinating.
+- **AgentMail** — `@agentmail/convex`: a dedicated Block-branded inbox, per-lead
+  threads, Svix-signed webhook ingest of inbound replies.
+- **OpenAI** — `gpt-4o-mini` for profile extraction, relevance judgment, per-lead
+  draft composition, and reply classification.
+- React + Vite + TypeScript, shadcn/ui.
 
-## Things that bit
+## Guardrails (deliberate)
 
-- `@agentmail/convex@0.1.0`'s component reads `AGENTMAIL_API_KEY` but never
-  declares it in `defineComponent`, so the parent app has no supported way
-  to grant it. Patched via `patch-package` (in `patches/`). Its
-  `internalAction`s (`createInbox`, `listInboxes`) also can't be resolved
-  from the parent app on Convex 1.45 — inbox provisioning goes through a
-  small REST call instead; webhook ingest and threaded replies use the
-  component as intended.
-- A forwarded job alert's own subject line ("...Apply Now.", "...12 more
-  jobs...") was being read as the user's "now" command and fired a digest
-  before its links had finished scraping. Subjects are now only trusted as
-  commands when they aren't a forward.
-- The first version of login gated the dashboard but not the digest queue,
-  so two accounts would have been batched into one email. Found by signing
-  in with a second account; fixed by keying the schedule per forwarder.
-- `@auth/core@0.41.1`, the version the Convex Auth docs point to, has a
-  critical email-normalization bypass — relevant when access is matched by
-  email. Bumped to 0.41.3.
-
-## Verified on production
-
-13 commits. End-to-end on the live deployment: forwarded real job-alert and
-apartment emails → 17 listings scraped and ranked across 9 emails → digests
-delivered in-thread (7 ranked jobs in one, with scores 50–85 and reasons) →
-"now" reply to digest in 17 s → second account signs in and sees nothing
-that isn't theirs. Parser for steering replies has 10 passing unit cases.
+- Replies land in AgentMail's inbox and surface on the dashboard — never routed
+  to the owner's personal inbox.
+- One follow-up per lead, professional tone — these are real businesses.
+- Auto-reply to third parties is an explicit opt-in, **off by default**, with a
+  1-hour grace window; the human stays in control.
 
 **Live:** https://flippant-stork-696.convex.site
 **Repo:** https://github.com/shwetd19/Convex-All-Gas
-**Video:** _(add link)_
+**Video:** https://www.youtube.com/watch?v=kHp2UfkJ9G8
