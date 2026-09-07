@@ -98,6 +98,10 @@ export default defineSchema({
     placeId: v.optional(v.string()),
     sourceUrl: v.optional(v.string()),
     contactEmail: v.optional(v.string()),
+    // Deliverability state of contactEmail. Unset = presumed good. "invalid"
+    // = failed syntax validation before sending; "bounced" = a send hard-
+    // bounced. Either one stops further outreach/follow-ups to this lead.
+    contactStatus: v.optional(v.union(v.literal("bounced"), v.literal("invalid"))),
     relevanceNote: v.optional(v.string()),
     // Where this lead was discovered ("Y Combinator", "Product Hunt", …);
     // unset for Google Places / event leads.
@@ -156,6 +160,15 @@ export default defineSchema({
   })
     .index("by_outreachId", ["outreachId"])
     .index("by_agentmailMessageId", ["agentmailMessageId"]),
+
+  // Global opt-out list (CAN-SPAM). Once an address is here — via the
+  // unsubscribe link or a bounce — the agent never contacts it again, across
+  // businesses and rescans. Checked before every cold send.
+  suppressions: defineTable({
+    email: v.string(), // lowercased
+    reason: v.optional(v.string()),
+    source: v.optional(v.string()), // "unsubscribe" | "bounce" | "manual"
+  }).index("by_email", ["email"]),
 
   // Timestamped log per business — the live "watch the agent work" feed
   // (sourced → drafted → sent → replied). Ordered by _creationTime.
