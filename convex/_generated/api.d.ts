@@ -13,6 +13,7 @@ import type * as auth from "../auth.js";
 import type * as businesses from "../businesses.js";
 import type * as crons from "../crons.js";
 import type * as demo from "../demo.js";
+import type * as digest from "../digest.js";
 import type * as email from "../email.js";
 import type * as http from "../http.js";
 import type * as inbox from "../inbox.js";
@@ -40,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   businesses: typeof businesses;
   crons: typeof crons;
   demo: typeof demo;
+  digest: typeof digest;
   email: typeof email;
   http: typeof http;
   inbox: typeof inbox;

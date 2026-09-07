@@ -18,7 +18,7 @@ import { FirecrawlClient } from "@firecrawl/firecrawl-convex";
 import { agentmailApiFetch } from "./lib/agentmailRest";
 import { searchNearbyPlaces, searchTextPlaces, type Place } from "./lib/places";
 import { extractEmails, extractExternalUrl, textToHtml } from "./lib/text";
-import { LIMIT_CONTACT_EMAIL } from "./limits";
+import { AUTO_SEND_PROBATION, LIMIT_CONTACT_EMAIL } from "./limits";
 import type { Id, Doc } from "./_generated/dataModel";
 
 const firecrawl = new FirecrawlClient(components.firecrawl);
@@ -728,11 +728,25 @@ ${business.url}"`,
       });
 
       if (business.approvalMode === "auto_send") {
-        const approved: boolean = await ctx.runMutation(internal.outreach.markApproved, {
-          outreachId,
+        // Probation: force approve-each for the account's first N sends, even
+        // with auto-send on, so the owner reviews their earliest outreach.
+        const usage = await ctx.runQuery(internal.limits.sentCountForBusinessOwner, {
+          businessId: lead.businessId,
         });
-        if (approved) {
-          await ctx.scheduler.runAfter(0, internal.pipeline.sendOutreach, { outreachId });
+        if (usage.count < AUTO_SEND_PROBATION) {
+          await ctx.runMutation(internal.activity.log, {
+            businessId: lead.businessId,
+            leadId,
+            kind: "system",
+            message: `Draft ready for ${lead.name}. Auto-send is on, but your first ${AUTO_SEND_PROBATION} emails need a quick review — approve it to send.`,
+          });
+        } else {
+          const approved: boolean = await ctx.runMutation(internal.outreach.markApproved, {
+            outreachId,
+          });
+          if (approved) {
+            await ctx.scheduler.runAfter(0, internal.pipeline.sendOutreach, { outreachId });
+          }
         }
       }
     } catch (err) {

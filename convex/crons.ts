@@ -11,4 +11,8 @@ crons.interval("outreach follow-up sweep", { minutes: 15 }, internal.maintenance
 // 15:00 UTC) so new competitors/events surface with zero user input.
 crons.cron("weekly lead rescan", "0 15 * * 1", internal.maintenance.weeklyRescan, {});
 
+// One hour after the rescan, email each opted-in owner a short digest of the
+// week (new leads, sends, replies, drafts to review) — skips quiet weeks.
+crons.cron("weekly owner digest", "0 16 * * 1", internal.digest.weeklyDigest, {});
+
 export default crons;
