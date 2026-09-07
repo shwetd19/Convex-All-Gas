@@ -208,6 +208,16 @@ export const setStatus = internalMutation({
   handler: (ctx, { leadId, status }) => ctx.db.patch(leadId, { status }),
 });
 
+// Mark a lead's contact email undeliverable (failed validation or bounced) so
+// the pipeline stops spending sends/follow-ups on it.
+export const markContactStatus = internalMutation({
+  args: {
+    leadId: v.id("leads"),
+    contactStatus: v.union(v.literal("bounced"), v.literal("invalid")),
+  },
+  handler: (ctx, { leadId, contactStatus }) => ctx.db.patch(leadId, { contactStatus }),
+});
+
 // PlaceIds already stored for a business — lets a rescan filter its
 // candidate pool before spending LLM triage on known places.
 export const listPlaceIds = internalQuery({

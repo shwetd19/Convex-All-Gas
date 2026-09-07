@@ -18,7 +18,7 @@ import { FirecrawlClient } from "@firecrawl/firecrawl-convex";
 import { agentmailApiFetch } from "./lib/agentmailRest";
 import { searchNearbyPlaces, searchTextPlaces, type Place } from "./lib/places";
 import { extractEmails, extractExternalUrl, textToHtml } from "./lib/text";
-import { LIMIT_CONTACT_EMAIL } from "./limits";
+import { AUTO_SEND_PROBATION, LIMIT_CONTACT_EMAIL } from "./limits";
 import type { Id, Doc } from "./_generated/dataModel";
 
 const firecrawl = new FirecrawlClient(components.firecrawl);
@@ -98,6 +98,21 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+// Lightweight syntax check before spending a send (no DNS/MX lookup — that
+// isn't reliably available in the runtime; bounces catch the rest).
+function isValidEmailSyntax(email: string): boolean {
+  const e = email.trim();
+  if (e.length > 254 || /\s/.test(e)) return false;
+  return /^[^@]+@[^@.]+(\.[^@.]+)+$/.test(e);
+}
+
+// Best-effort hard-bounce detection from a send error string.
+function isBounceError(message: string): boolean {
+  return /\b(bounced?|undeliverable|mailbox (not found|unavailable|full)|no such user|user unknown|550|551|553|5\.1\.[0-9])\b/i.test(
+    message,
+  );
+}
+
 function businessProfileText(business: {
   name?: string;
   url: string;
@@ -130,6 +145,39 @@ const CLASSIFICATION_TEXT: Record<string, string> = {
   not_interested: "not interested",
   needs_info: "needs info",
 };
+
+// Cheap pre-check for claims a cold email should never make. A hit triggers one
+// conservative rewrite pass — the prompt is the primary defense, this is the
+// backstop for when the model slips.
+function hasRiskyClaim(text: string): boolean {
+  const patterns: RegExp[] = [
+    /\b(guarantee|guaranteed|promise|promised|guaranteeing)\b/i,
+    /\b\d+\s?%\s?(off|discount|more|increase|growth|roi)\b/i,
+    /\b(for free|no cost|no-cost|risk-free|money[- ]back)\b/i,
+    /\b(as you know|as we discussed|as discussed|per our|our (previous|prior|last) (call|conversation|email|chat)|following up on our|as promised|reconnecting|circling back on our)\b/i,
+    /\b(#1|number one|the best|cheapest|lowest price|top[- ]rated|market[- ]leading|guaranteed results)\b/i,
+    /\bwe(?:'ve| have) worked (with|together)\b/i,
+  ];
+  return patterns.some((re) => re.test(text));
+}
+
+// CAN-SPAM footer appended to every cold email (initial + follow-up): who sent
+// it, a physical postal address (from env, when set), and a working opt-out
+// link that suppresses the recipient globally.
+function complianceFooter(businessName: string, recipientEmail: string): string {
+  const site = process.env.CONVEX_SITE_URL ?? "";
+  const unsub = site ? `${site}/unsubscribe?email=${encodeURIComponent(recipientEmail)}` : "";
+  const postal = process.env.BLOCK_POSTAL_ADDRESS;
+  return [
+    "",
+    "—",
+    `Sent by ${businessName || "a local business"} via Block.`,
+    postal ?? "",
+    unsub ? `Not interested? Unsubscribe: ${unsub}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
 
 // ---------------------------------------------------------------- intake
 
@@ -677,7 +725,7 @@ export const generateDraft = internalAction({
 
     try {
       const draft = await askJson(
-        "You write short, professional B2B outreach emails from one local business owner to a nearby business, office, event organizer, or prospective customer. Warm, specific, zero spam clichés, no placeholder brackets, plain text. Respond with strict JSON only.",
+        "You write short, professional B2B outreach emails from one local business owner to a nearby business, office, event organizer, or prospective customer. Warm, specific, zero spam clichés, no placeholder brackets, plain text. Respond with strict JSON only. Hard rules you must never break: never state a fact about the recipient you can't back up from the research provided; never promise pricing, discounts, guarantees, results, or availability the sender hasn't approved; never imply an existing relationship, prior contact, or referral that didn't happen; no superlatives about being the best/cheapest/#1. Only use the real detail given below.",
         `Sender (writing as the owner):
 ${businessProfileText(business)}
 
@@ -707,18 +755,54 @@ ${business.url}"`,
       if (typeof draft.subject !== "string" || typeof draft.body !== "string") {
         throw new Error("Draft generation returned an unexpected shape");
       }
+
+      // Guardrail backstop: if the draft still slipped in a risky claim
+      // (over-promise, fake relationship, unverifiable superlative), ask once
+      // for a conservative rewrite before saving.
+      let body = draft.body;
+      if (hasRiskyClaim(body)) {
+        try {
+          const safer = await askJson(
+            "You revise a B2B outreach email to remove any unverifiable or over-promising language while keeping it warm, specific, and the same length and sign-off. Respond with strict JSON only.",
+            `Rewrite this email to strictly obey: no promises of pricing/discounts/guarantees/results/availability; no claims about the recipient you can't verify; no implying a prior relationship or referral; no "best/cheapest/#1" superlatives. Keep it plain text with the same sign-off.
+
+Email:
+${body}
+
+Respond with JSON: {"body": string}.`,
+          );
+          if (typeof safer.body === "string" && safer.body.trim()) body = safer.body.trim();
+        } catch (err) {
+          console.error("Guardrail rewrite failed", err);
+        }
+      }
+
       await ctx.runMutation(internal.outreach.saveDraft, {
         outreachId,
         subject: draft.subject.slice(0, 120),
-        draftText: draft.body,
+        draftText: body,
       });
 
       if (business.approvalMode === "auto_send") {
-        const approved: boolean = await ctx.runMutation(internal.outreach.markApproved, {
-          outreachId,
+        // Probation: force approve-each for the account's first N sends, even
+        // with auto-send on, so the owner reviews their earliest outreach.
+        const usage = await ctx.runQuery(internal.limits.sentCountForBusinessOwner, {
+          businessId: lead.businessId,
         });
-        if (approved) {
-          await ctx.scheduler.runAfter(0, internal.pipeline.sendOutreach, { outreachId });
+        if (usage.count < AUTO_SEND_PROBATION) {
+          await ctx.runMutation(internal.activity.log, {
+            businessId: lead.businessId,
+            leadId,
+            kind: "system",
+            message: `Draft ready for ${lead.name}. Auto-send is on, but your first ${AUTO_SEND_PROBATION} emails need a quick review — approve it to send.`,
+          });
+        } else {
+          const approved: boolean = await ctx.runMutation(internal.outreach.markApproved, {
+            outreachId,
+          });
+          if (approved) {
+            await ctx.scheduler.runAfter(0, internal.pipeline.sendOutreach, { outreachId });
+          }
         }
       }
     } catch (err) {
@@ -741,6 +825,22 @@ export const sendOutreach = internalAction({
     const lead = await ctx.runQuery(internal.leads.get, { leadId: outreach.leadId });
     if (!lead?.contactEmail) return;
 
+    // Don't spend a send on a contact already known bad, or a malformed address.
+    if (lead.contactStatus === "bounced" || lead.contactStatus === "invalid") return;
+    if (!isValidEmailSyntax(lead.contactEmail)) {
+      await ctx.runMutation(internal.leads.markContactStatus, {
+        leadId: lead._id,
+        contactStatus: "invalid",
+      });
+      await ctx.runMutation(internal.activity.log, {
+        businessId: outreach.businessId,
+        leadId: outreach.leadId,
+        kind: "system",
+        message: `Skipped ${lead.name}: "${lead.contactEmail}" isn't a valid email address.`,
+      });
+      return;
+    }
+
     // Backstop for the auto-send path: never exceed the per-account email cap.
     const usage = await ctx.runQuery(internal.limits.sentCountForBusinessOwner, {
       businessId: outreach.businessId,
@@ -755,10 +855,27 @@ export const sendOutreach = internalAction({
       return;
     }
 
+    // Opt-out: never cold-email a globally suppressed address.
+    if (await ctx.runQuery(internal.suppressions.isSuppressed, { email: lead.contactEmail })) {
+      await ctx.runMutation(internal.activity.log, {
+        businessId: outreach.businessId,
+        leadId: outreach.leadId,
+        kind: "system",
+        message: `Send skipped for ${lead.name}: ${lead.contactEmail} has unsubscribed.`,
+      });
+      return;
+    }
+
     try {
       const inbox = await ctx.runQuery(internal.inbox.getInternal, {});
       if (!inbox) throw new Error("No AgentMail inbox provisioned — create one from the dashboard");
       if (!outreach.subject || !outreach.draftText) throw new Error("Draft is empty");
+
+      const business = await ctx.runQuery(internal.businesses.getById, {
+        businessId: outreach.businessId,
+      });
+      const emailText =
+        outreach.draftText + complianceFooter(business?.name ?? "", lead.contactEmail);
 
       const res = await agentmailApiFetch(
         `/inboxes/${encodeURIComponent(inbox.inboxId)}/messages/send`,
@@ -768,8 +885,8 @@ export const sendOutreach = internalAction({
           body: JSON.stringify({
             to: [lead.contactEmail],
             subject: outreach.subject,
-            text: outreach.draftText,
-            html: textToHtml(outreach.draftText),
+            text: emailText,
+            html: textToHtml(emailText),
           }),
         },
       );
@@ -784,10 +901,15 @@ export const sendOutreach = internalAction({
         agentmailThreadId: threadId,
       });
     } catch (err) {
-      await ctx.runMutation(internal.outreach.markSendFailed, {
-        outreachId,
-        error: errMessage(err),
-      });
+      const message = errMessage(err);
+      // Hard-bounce signals → stop contacting this address going forward.
+      if (isBounceError(message)) {
+        await ctx.runMutation(internal.leads.markContactStatus, {
+          leadId: lead._id,
+          contactStatus: "bounced",
+        });
+      }
+      await ctx.runMutation(internal.outreach.markSendFailed, { outreachId, error: message });
     }
   },
 });
@@ -813,6 +935,20 @@ export const sendFollowUp = internalAction({
       businessId: outreach.businessId,
     });
 
+    // Don't burn a follow-up on an address that bounced or was invalid.
+    if (lead?.contactStatus === "bounced" || lead?.contactStatus === "invalid") return;
+
+    // Opt-out: don't follow up with a suppressed address.
+    if (lead?.contactEmail && (await ctx.runQuery(internal.suppressions.isSuppressed, { email: lead.contactEmail }))) {
+      await ctx.runMutation(internal.activity.log, {
+        businessId: outreach.businessId,
+        leadId: outreach.leadId,
+        kind: "system",
+        message: `Follow-up skipped for ${lead.name}: ${lead.contactEmail} has unsubscribed.`,
+      });
+      return;
+    }
+
     let text = `Hi — just floating this back to the top of your inbox in case it got buried. Still happy to chat whenever suits. If it's not a fit, no worries at all.\n\nBest,\n${business?.name ?? ""}`.trim();
     try {
       const generated = await askJson(
@@ -830,13 +966,14 @@ Respond with JSON: {"body": string} — 2-3 sentences, reference the original id
       console.error("Follow-up generation failed, using fallback", err);
     }
 
+    const followUpText = text + complianceFooter(business?.name ?? "", lead?.contactEmail ?? "");
     try {
       await agentmailApiFetch(
         `/inboxes/${encodeURIComponent(outreach.inboxId)}/messages/${encodeURIComponent(outreach.agentmailMessageId)}/reply`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, html: textToHtml(text) }),
+          body: JSON.stringify({ text: followUpText, html: textToHtml(followUpText) }),
         },
       );
       await ctx.runMutation(internal.outreach.markFollowedUp, { outreachId, text });
