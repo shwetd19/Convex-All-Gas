@@ -742,7 +742,11 @@ Write the email. Respond with JSON: {"subject": string, "body": string}
   Blank line, then paragraph 1 (1-2 sentences): the specific real detail from the research — why them, why now. Never "I hope this finds you well".
   Blank line, then paragraph 2 (1-2 sentences): who we are in half a sentence, plus ONE concrete proposal that fits a ${lead.type} (cross-promo, bundle, referral swap, event booth/catering, office perk or bulk order — or, for a customer prospect, a specific first offer of your product/service tailored to what they do).
   Optionally 2-3 short "- " bullet lines if they genuinely sharpen the proposal.
-  Blank line, then a low-friction closing ask (a short reply or a 15-minute chat).
+  Blank line, then a low-friction closing ask (a short reply or a 15-minute chat).${
+    business.bookingUrl
+      ? `\n  In that closing ask, offer this scheduling link so they can book a time directly (paste it as-is): ${business.bookingUrl}`
+      : ""
+  }
   Blank line, then exactly:
   "Best,
 ${business.name ?? "the owner"}
