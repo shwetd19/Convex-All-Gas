@@ -33,3 +33,17 @@ export const add = internalMutation({
     await ctx.db.insert("suppressions", { email: e, reason, source: source ?? "manual" });
   },
 });
+
+// Remove an address from the suppression list (re-subscribe / admin cleanup).
+export const removeByEmail = internalMutation({
+  args: { email: v.string() },
+  handler: async (ctx, { email }) => {
+    const e = normalize(email);
+    const row = await ctx.db
+      .query("suppressions")
+      .withIndex("by_email", (q) => q.eq("email", e))
+      .first();
+    if (row) await ctx.db.delete(row._id);
+    return row !== null;
+  },
+});
