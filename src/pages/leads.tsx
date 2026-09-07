@@ -1,6 +1,6 @@
 import { useMutation } from "convex/react";
 import { useState } from "react";
-import { CheckCircle2, Loader2 } from "lucide-react";
+import { CheckCircle2, Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
@@ -14,6 +14,7 @@ import { DraftsBanner } from "@/components/drafts-banner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { downloadLeadsCsv } from "@/lib/csv";
 import { SCAN_WINDOW_MS, errorMessage, formatClock, useNowTick } from "@/lib/format";
 import { LEAD_NAV, isDraftReady } from "@/lib/types";
 import type { BusinessDoc, LeadRow, LeadType } from "@/lib/types";
@@ -64,15 +65,31 @@ export function LeadsPage({
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        title={label}
-        description={
-          <>
-            {business.name ?? business.url}
-            {business.address ? ` · ${business.address}` : ""}
-          </>
-        }
-      />
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <PageHeader
+          title={label}
+          description={
+            <>
+              {business.name ?? business.url}
+              {business.address ? ` · ${business.address}` : ""}
+            </>
+          }
+        />
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={pageRows.length === 0}
+          onClick={() =>
+            downloadLeadsCsv(
+              pageRows,
+              `${(business.name ?? "block").toLowerCase().replace(/\s+/g, "-")}-${type}s`,
+            )
+          }
+        >
+          <Download />
+          Export CSV
+        </Button>
+      </div>
 
       <InboxBanner />
 
