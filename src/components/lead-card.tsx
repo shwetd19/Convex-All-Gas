@@ -1,9 +1,9 @@
 import { useMutation } from "convex/react";
 import { useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
-import { ClassificationBadge, StatusBadge } from "@/components/status-badges";
+import { ClassificationBadge, StatusBadge, TypeBadge, TYPE_TINT } from "@/components/status-badges";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { errorMessage, formatCountdown, initials } from "@/lib/format";
@@ -72,6 +72,7 @@ export function LeadCard({
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-heading text-base font-semibold">{lead.name}</span>
+              <TypeBadge type={lead.type} />
               {draftReady ? (
                 <Badge className="border-amber-200 bg-amber-100 text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
                   Draft ready
@@ -89,7 +90,15 @@ export function LeadCard({
               )}
             </div>
             {lead.relevanceNote && (
-              <p className="line-clamp-1 text-muted-foreground">{lead.relevanceNote}</p>
+              <div
+                className={cn(
+                  "mt-0.5 inline-flex max-w-full items-start gap-1.5 rounded-lg px-2.5 py-1",
+                  TYPE_TINT[lead.type],
+                )}
+              >
+                <Sparkles className="mt-0.5 size-3.5 shrink-0 opacity-80" />
+                <span className="line-clamp-2 text-xs font-medium">{lead.relevanceNote}</span>
+              </div>
             )}
             <p className="line-clamp-1 text-xs break-all text-muted-foreground">{meta}</p>
           </div>
