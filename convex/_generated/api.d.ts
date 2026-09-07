@@ -26,6 +26,7 @@ import type * as limits from "../limits.js";
 import type * as maintenance from "../maintenance.js";
 import type * as outreach from "../outreach.js";
 import type * as pipeline from "../pipeline.js";
+import type * as suppressions from "../suppressions.js";
 import type * as users from "../users.js";
 
 import type {
@@ -53,6 +54,7 @@ declare const fullApi: ApiFromModules<{
   maintenance: typeof maintenance;
   outreach: typeof outreach;
   pipeline: typeof pipeline;
+  suppressions: typeof suppressions;
   users: typeof users;
 }>;
 

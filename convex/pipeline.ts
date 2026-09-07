@@ -131,6 +131,24 @@ const CLASSIFICATION_TEXT: Record<string, string> = {
   needs_info: "needs info",
 };
 
+// CAN-SPAM footer appended to every cold email (initial + follow-up): who sent
+// it, a physical postal address (from env, when set), and a working opt-out
+// link that suppresses the recipient globally.
+function complianceFooter(businessName: string, recipientEmail: string): string {
+  const site = process.env.CONVEX_SITE_URL ?? "";
+  const unsub = site ? `${site}/unsubscribe?email=${encodeURIComponent(recipientEmail)}` : "";
+  const postal = process.env.BLOCK_POSTAL_ADDRESS;
+  return [
+    "",
+    "—",
+    `Sent by ${businessName || "a local business"} via Block.`,
+    postal ?? "",
+    unsub ? `Not interested? Unsubscribe: ${unsub}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 // ---------------------------------------------------------------- intake
 
 // Onboarding step 2: read the user's own site, parse a profile, resolve the
@@ -765,10 +783,27 @@ export const sendOutreach = internalAction({
       return;
     }
 
+    // Opt-out: never cold-email a globally suppressed address.
+    if (await ctx.runQuery(internal.suppressions.isSuppressed, { email: lead.contactEmail })) {
+      await ctx.runMutation(internal.activity.log, {
+        businessId: outreach.businessId,
+        leadId: outreach.leadId,
+        kind: "system",
+        message: `Send skipped for ${lead.name}: ${lead.contactEmail} has unsubscribed.`,
+      });
+      return;
+    }
+
     try {
       const inbox = await ctx.runQuery(internal.inbox.getInternal, {});
       if (!inbox) throw new Error("No AgentMail inbox provisioned — create one from the dashboard");
       if (!outreach.subject || !outreach.draftText) throw new Error("Draft is empty");
+
+      const business = await ctx.runQuery(internal.businesses.getById, {
+        businessId: outreach.businessId,
+      });
+      const emailText =
+        outreach.draftText + complianceFooter(business?.name ?? "", lead.contactEmail);
 
       const res = await agentmailApiFetch(
         `/inboxes/${encodeURIComponent(inbox.inboxId)}/messages/send`,
@@ -778,8 +813,8 @@ export const sendOutreach = internalAction({
           body: JSON.stringify({
             to: [lead.contactEmail],
             subject: outreach.subject,
-            text: outreach.draftText,
-            html: textToHtml(outreach.draftText),
+            text: emailText,
+            html: textToHtml(emailText),
           }),
         },
       );
@@ -823,6 +858,17 @@ export const sendFollowUp = internalAction({
       businessId: outreach.businessId,
     });
 
+    // Opt-out: don't follow up with a suppressed address.
+    if (lead?.contactEmail && (await ctx.runQuery(internal.suppressions.isSuppressed, { email: lead.contactEmail }))) {
+      await ctx.runMutation(internal.activity.log, {
+        businessId: outreach.businessId,
+        leadId: outreach.leadId,
+        kind: "system",
+        message: `Follow-up skipped for ${lead.name}: ${lead.contactEmail} has unsubscribed.`,
+      });
+      return;
+    }
+
     let text = `Hi — just floating this back to the top of your inbox in case it got buried. Still happy to chat whenever suits. If it's not a fit, no worries at all.\n\nBest,\n${business?.name ?? ""}`.trim();
     try {
       const generated = await askJson(
@@ -840,13 +886,14 @@ Respond with JSON: {"body": string} — 2-3 sentences, reference the original id
       console.error("Follow-up generation failed, using fallback", err);
     }
 
+    const followUpText = text + complianceFooter(business?.name ?? "", lead?.contactEmail ?? "");
     try {
       await agentmailApiFetch(
         `/inboxes/${encodeURIComponent(outreach.inboxId)}/messages/${encodeURIComponent(outreach.agentmailMessageId)}/reply`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, html: textToHtml(text) }),
+          body: JSON.stringify({ text: followUpText, html: textToHtml(followUpText) }),
         },
       );
       await ctx.runMutation(internal.outreach.markFollowedUp, { outreachId, text });
