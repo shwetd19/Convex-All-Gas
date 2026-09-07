@@ -115,6 +115,24 @@ export function SettingsPage({ business }: { business: BusinessDoc }) {
             />
             <span className="text-sm text-muted-foreground">days</span>
           </SettingRow>
+          <Separator />
+          <SettingRow
+            title="Scheduling link"
+            description="Optional. Paste a Calendly-style booking link and the agent offers it in outreach so interested leads can book a call directly."
+          >
+            <Input
+              type="url"
+              placeholder="calendly.com/you/intro"
+              className="w-72"
+              defaultValue={business.bookingUrl ?? ""}
+              onBlur={(e) => {
+                const next = e.target.value.trim();
+                if (next !== (business.bookingUrl ?? "")) {
+                  void update({ businessId, bookingUrl: next });
+                }
+              }}
+            />
+          </SettingRow>
         </CardContent>
       </Card>
 
