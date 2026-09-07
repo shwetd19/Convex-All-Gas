@@ -98,6 +98,21 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+// Lightweight syntax check before spending a send (no DNS/MX lookup — that
+// isn't reliably available in the runtime; bounces catch the rest).
+function isValidEmailSyntax(email: string): boolean {
+  const e = email.trim();
+  if (e.length > 254 || /\s/.test(e)) return false;
+  return /^[^@]+@[^@.]+(\.[^@.]+)+$/.test(e);
+}
+
+// Best-effort hard-bounce detection from a send error string.
+function isBounceError(message: string): boolean {
+  return /\b(bounced?|undeliverable|mailbox (not found|unavailable|full)|no such user|user unknown|550|551|553|5\.1\.[0-9])\b/i.test(
+    message,
+  );
+}
+
 function businessProfileText(business: {
   name?: string;
   url: string;
@@ -806,6 +821,22 @@ export const sendOutreach = internalAction({
     const lead = await ctx.runQuery(internal.leads.get, { leadId: outreach.leadId });
     if (!lead?.contactEmail) return;
 
+    // Don't spend a send on a contact already known bad, or a malformed address.
+    if (lead.contactStatus === "bounced" || lead.contactStatus === "invalid") return;
+    if (!isValidEmailSyntax(lead.contactEmail)) {
+      await ctx.runMutation(internal.leads.markContactStatus, {
+        leadId: lead._id,
+        contactStatus: "invalid",
+      });
+      await ctx.runMutation(internal.activity.log, {
+        businessId: outreach.businessId,
+        leadId: outreach.leadId,
+        kind: "system",
+        message: `Skipped ${lead.name}: "${lead.contactEmail}" isn't a valid email address.`,
+      });
+      return;
+    }
+
     // Backstop for the auto-send path: never exceed the per-account email cap.
     const usage = await ctx.runQuery(internal.limits.sentCountForBusinessOwner, {
       businessId: outreach.businessId,
@@ -866,10 +897,15 @@ export const sendOutreach = internalAction({
         agentmailThreadId: threadId,
       });
     } catch (err) {
-      await ctx.runMutation(internal.outreach.markSendFailed, {
-        outreachId,
-        error: errMessage(err),
-      });
+      const message = errMessage(err);
+      // Hard-bounce signals → stop contacting this address going forward.
+      if (isBounceError(message)) {
+        await ctx.runMutation(internal.leads.markContactStatus, {
+          leadId: lead._id,
+          contactStatus: "bounced",
+        });
+      }
+      await ctx.runMutation(internal.outreach.markSendFailed, { outreachId, error: message });
     }
   },
 });
@@ -894,6 +930,9 @@ export const sendFollowUp = internalAction({
     const business = await ctx.runQuery(internal.businesses.getById, {
       businessId: outreach.businessId,
     });
+
+    // Don't burn a follow-up on an address that bounced or was invalid.
+    if (lead?.contactStatus === "bounced" || lead?.contactStatus === "invalid") return;
 
     // Opt-out: don't follow up with a suppressed address.
     if (lead?.contactEmail && (await ctx.runQuery(internal.suppressions.isSuppressed, { email: lead.contactEmail }))) {
