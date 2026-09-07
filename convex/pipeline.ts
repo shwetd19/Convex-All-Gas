@@ -131,6 +131,21 @@ const CLASSIFICATION_TEXT: Record<string, string> = {
   needs_info: "needs info",
 };
 
+// Cheap pre-check for claims a cold email should never make. A hit triggers one
+// conservative rewrite pass — the prompt is the primary defense, this is the
+// backstop for when the model slips.
+function hasRiskyClaim(text: string): boolean {
+  const patterns: RegExp[] = [
+    /\b(guarantee|guaranteed|promise|promised|guaranteeing)\b/i,
+    /\b\d+\s?%\s?(off|discount|more|increase|growth|roi)\b/i,
+    /\b(for free|no cost|no-cost|risk-free|money[- ]back)\b/i,
+    /\b(as you know|as we discussed|as discussed|per our|our (previous|prior|last) (call|conversation|email|chat)|following up on our|as promised|reconnecting|circling back on our)\b/i,
+    /\b(#1|number one|the best|cheapest|lowest price|top[- ]rated|market[- ]leading|guaranteed results)\b/i,
+    /\bwe(?:'ve| have) worked (with|together)\b/i,
+  ];
+  return patterns.some((re) => re.test(text));
+}
+
 // CAN-SPAM footer appended to every cold email (initial + follow-up): who sent
 // it, a physical postal address (from env, when set), and a working opt-out
 // link that suppresses the recipient globally.
@@ -695,7 +710,7 @@ export const generateDraft = internalAction({
 
     try {
       const draft = await askJson(
-        "You write short, professional B2B outreach emails from one local business owner to a nearby business, office, event organizer, or prospective customer. Warm, specific, zero spam clichés, no placeholder brackets, plain text. Respond with strict JSON only.",
+        "You write short, professional B2B outreach emails from one local business owner to a nearby business, office, event organizer, or prospective customer. Warm, specific, zero spam clichés, no placeholder brackets, plain text. Respond with strict JSON only. Hard rules you must never break: never state a fact about the recipient you can't back up from the research provided; never promise pricing, discounts, guarantees, results, or availability the sender hasn't approved; never imply an existing relationship, prior contact, or referral that didn't happen; no superlatives about being the best/cheapest/#1. Only use the real detail given below.",
         `Sender (writing as the owner):
 ${businessProfileText(business)}
 
@@ -721,10 +736,32 @@ ${business.url}"`,
       if (typeof draft.subject !== "string" || typeof draft.body !== "string") {
         throw new Error("Draft generation returned an unexpected shape");
       }
+
+      // Guardrail backstop: if the draft still slipped in a risky claim
+      // (over-promise, fake relationship, unverifiable superlative), ask once
+      // for a conservative rewrite before saving.
+      let body = draft.body;
+      if (hasRiskyClaim(body)) {
+        try {
+          const safer = await askJson(
+            "You revise a B2B outreach email to remove any unverifiable or over-promising language while keeping it warm, specific, and the same length and sign-off. Respond with strict JSON only.",
+            `Rewrite this email to strictly obey: no promises of pricing/discounts/guarantees/results/availability; no claims about the recipient you can't verify; no implying a prior relationship or referral; no "best/cheapest/#1" superlatives. Keep it plain text with the same sign-off.
+
+Email:
+${body}
+
+Respond with JSON: {"body": string}.`,
+          );
+          if (typeof safer.body === "string" && safer.body.trim()) body = safer.body.trim();
+        } catch (err) {
+          console.error("Guardrail rewrite failed", err);
+        }
+      }
+
       await ctx.runMutation(internal.outreach.saveDraft, {
         outreachId,
         subject: draft.subject.slice(0, 120),
-        draftText: draft.body,
+        draftText: body,
       });
 
       if (business.approvalMode === "auto_send") {
