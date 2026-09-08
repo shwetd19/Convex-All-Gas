@@ -96,3 +96,20 @@ line an agent acting on your behalf toward real third parties should respect.
 **Live:** https://flippant-stork-696.convex.site
 **Repo:** https://github.com/shwetd19/Convex-All-Gas
 **Video:** https://www.youtube.com/watch?v=kHp2UfkJ9G8
+
+## Changelog since submission
+
+Ten PRs shipped on 7 Sept 2026, all merged and live at the same URL. In order:
+
+- **#1 Signal chips on lead cards.** Every card now shows a colored type badge (customer / competitor / complement / office / event) and the "why this lead matters" note as a tinted callout instead of grey body text.
+- **#2 Weekly owner digest.** A Monday cron emails each opted-in owner one short recap: leads sourced, emails sent, replies, drafts waiting. Skips the email entirely on a quiet week.
+- **#3 Auto-send probation.** Even with auto-send on, an account's first 5 outreach emails are held for manual approval, so nobody's first experience is an unreviewed email going to a stranger.
+- **#4 Opt-outs and CAN-SPAM.** Every cold email carries a compliance footer with sender identity, postal address, and a working unsubscribe link. A public /unsubscribe route feeds a global suppression list that the pipeline checks before every send and follow-up, forever, across businesses.
+- **#5 No risky claims in drafts.** The draft prompt now forbids unverifiable facts, pricing or results promises, fake prior relationships, and "best/#1" superlatives. A regex backstop catches anything that slips through and asks the model for one conservative rewrite before saving.
+- **#6 Bad-email detection.** Malformed contact emails are marked invalid and skipped before any send. A hard-bounce signal on send marks the contact bounced. Follow-ups skip both.
+- **#7 Agent health and audit view.** The Activity page now has a 7-day health strip (sourced, sent, replies, follow-ups, issues) and filter tabs (All / Sends / Replies / Issues) over the append-only log.
+- **#8 Scheduling link.** Set a Calendly-style link in Settings and the agent offers it in the closing ask of each draft.
+- **#9 CSV export.** One-click export of any lead bucket for people who live in a spreadsheet or another CRM.
+- **#10 Insights page.** Stat cards, reply / interested / win rates, and an estimated hours-saved figure computed from what the agent researched and drafted on your behalf.
+
+Also since 3 Sept: a shared read-only demo workspace every user can browse, free-tier caps (3 businesses, 20 outreach emails per account), and a clearer locked-nav setup flow while the first scan runs.
